@@ -1,5 +1,5 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -34,7 +34,7 @@ typedef struct x11_input
    Window win;
 
    char state[32];
-   bool mouse_l, mouse_r, mouse_m;
+   bool mouse_l, mouse_r, mouse_m, mouse_wu, mouse_wd;
    int mouse_x, mouse_y;
    int mouse_last_x, mouse_last_y;
 
@@ -85,6 +85,17 @@ static bool x_is_pressed(x11_input_t *x11, const struct retro_keybind *binds, un
       return false;
 }
 
+static int16_t x_pressed_analog(x11_input_t *x11, const struct retro_keybind *binds, unsigned index, unsigned id)
+{
+   unsigned id_minus = 0;
+   unsigned id_plus  = 0;
+   input_conv_analog_id_to_bind_id(index, id, &id_minus, &id_plus);
+
+   int16_t pressed_minus = x_is_pressed(x11, binds, id_minus) ? -0x7fff : 0;
+   int16_t pressed_plus = x_is_pressed(x11, binds, id_plus) ? 0x7fff : 0;
+   return pressed_plus + pressed_minus;
+}
+
 static bool x_bind_button_pressed(void *data, int key)
 {
    x11_input_t *x11 = (x11_input_t*)data;
@@ -104,6 +115,12 @@ static int16_t x_mouse_state(x11_input_t *x11, unsigned id)
          return x11->mouse_l;
       case RETRO_DEVICE_ID_MOUSE_RIGHT:
          return x11->mouse_r;
+      case RETRO_DEVICE_ID_MOUSE_WHEELUP:
+         return x11->mouse_wu;
+      case RETRO_DEVICE_ID_MOUSE_WHEELDOWN:
+         return x11->mouse_wd;
+      case RETRO_DEVICE_ID_MOUSE_MIDDLE:
+         return x11->mouse_m;
       default:
          return 0;
    }
@@ -171,6 +188,7 @@ static int16_t x_lightgun_state(x11_input_t *x11, unsigned id)
 static int16_t x_input_state(void *data, const struct retro_keybind **binds, unsigned port, unsigned device, unsigned index, unsigned id)
 {
    x11_input_t *x11 = (x11_input_t*)data;
+   int16_t ret;
 
    switch (device)
    {
@@ -182,7 +200,10 @@ static int16_t x_input_state(void *data, const struct retro_keybind **binds, uns
          return x_key_pressed(x11, id);
 
       case RETRO_DEVICE_ANALOG:
-         return input_joypad_analog(x11->joypad, port, index, id, binds[port]);
+         ret = x_pressed_analog(x11, binds[port], index, id);
+         if (!ret)
+            ret = input_joypad_analog(x11->joypad, port, index, id, binds[port]);
+         return ret;
 
       case RETRO_DEVICE_MOUSE:
          return x_mouse_state(x11, id);
@@ -225,11 +246,13 @@ static void x_input_poll_mouse(x11_input_t *x11)
             &win_x, &win_y,
             &mask);
 
-   x11->mouse_x = win_x;
-   x11->mouse_y = win_y;
-   x11->mouse_l = mask & Button1Mask; 
-   x11->mouse_m = mask & Button2Mask; 
-   x11->mouse_r = mask & Button3Mask; 
+   x11->mouse_x  = win_x;
+   x11->mouse_y  = win_y;
+   x11->mouse_l  = mask & Button1Mask; 
+   x11->mouse_m  = mask & Button2Mask; 
+   x11->mouse_r  = mask & Button3Mask; 
+   x11->mouse_wu = mask & Button4Mask; 
+   x11->mouse_wd = mask & Button5Mask; 
 
    // Somewhat hacky, but seem to do the job.
    if (x11->grab_mouse && video_focus_func())
@@ -269,6 +292,32 @@ static void x_grab_mouse(void *data, bool state)
    x11->grab_mouse = state;
 }
 
+static bool x_set_rumble(void *data, unsigned port, enum retro_rumble_effect effect, uint16_t strength)
+{
+   x11_input_t *x11 = (x11_input_t*)data;
+   return input_joypad_set_rumble(x11->joypad, port, effect, strength);
+}
+
+static const rarch_joypad_driver_t *x_get_joypad_driver(void *data)
+{
+   x11_input_t *x11 = (x11_input_t*)data;
+   return x11->joypad;
+}
+
+static uint64_t x_input_get_capabilities(void *data)
+{
+   uint64_t caps = 0;
+
+   caps |= (1 << RETRO_DEVICE_JOYPAD);
+   caps |= (1 << RETRO_DEVICE_MOUSE);
+   caps |= (1 << RETRO_DEVICE_KEYBOARD);
+   caps |= (1 << RETRO_DEVICE_LIGHTGUN);
+   caps |= (1 << RETRO_DEVICE_POINTER);
+   caps |= (1 << RETRO_DEVICE_ANALOG);
+
+   return caps;
+}
+
 const input_driver_t input_x = {
    x_input_init,
    x_input_poll,
@@ -276,7 +325,13 @@ const input_driver_t input_x = {
    x_bind_button_pressed,
    x_input_free,
    NULL,
+   NULL,
+   NULL,
+   x_input_get_capabilities,
+   NULL,
    "x",
    x_grab_mouse,
+   x_set_rumble,
+   x_get_joypad_driver,
 };
 

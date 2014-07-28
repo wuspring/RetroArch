@@ -1,5 +1,5 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -18,6 +18,7 @@
 
 #define FONT_WIDTH 5
 #define FONT_HEIGHT 10
+#define FONT_HEIGHT_BASELINE 8
 #define FONT_WIDTH_STRIDE (FONT_WIDTH + 1)
 #define FONT_HEIGHT_STRIDE (FONT_HEIGHT + 1)
 

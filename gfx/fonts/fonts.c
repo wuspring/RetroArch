@@ -1,5 +1,5 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -24,21 +24,25 @@ static const font_renderer_driver_t *font_backends[] = {
 #ifdef HAVE_FREETYPE
    &ft_font_renderer,
 #endif
+#if !defined(DONT_HAVE_BITMAPFONTS)
    &bitmap_font_renderer,
+#endif
+   NULL
 };
 
-bool font_renderer_create_default(const font_renderer_driver_t **driver, void **handle)
+bool font_renderer_create_default(const font_renderer_driver_t **driver, void **handle,
+      const char *font_path, unsigned font_size)
 {
-   for (unsigned i = 0; i < ARRAY_SIZE(font_backends); i++)
+   unsigned i;
+   for (i = 0; font_backends[i]; i++)
    {
-      const char *font_path = *g_settings.video.font_path ? g_settings.video.font_path : NULL;
-      if (!font_path)
-         font_path = font_backends[i]->get_default_font();
-
-      if (!font_path)
+      const char *path = font_path;
+      if (!path)
+         path = font_backends[i]->get_default_font();
+      if (!path)
          continue;
 
-      *handle = font_backends[i]->init(font_path, g_settings.video.font_size);
+      *handle = font_backends[i]->init(path, font_size);
       if (*handle)
       {
          RARCH_LOG("Using font rendering backend: %s.\n", font_backends[i]->ident);

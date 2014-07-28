@@ -1,6 +1,6 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
- *  Copyright (C) 2011-2013 - Daniel De Matteis
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
+ *  Copyright (C) 2011-2014 - Daniel De Matteis
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -54,7 +54,7 @@ static void *xa_init(const char *device, unsigned rate, unsigned latency)
       return NULL;
    }
 
-   if (g_extern.verbose)
+   if (g_extern.verbosity)
       xaudio2_enumerate_devices(xa->xa);
 
    return xa;

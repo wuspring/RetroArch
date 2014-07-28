@@ -40,6 +40,8 @@ check_lib()	#$1 = HAVE_$1	$2 = lib	$3 = function in lib	$4 = extralibs
 		echo "Forced to build with library $2, but cannot locate. Exiting ..."
 		exit 1
 	}
+
+	/bin/true
 }
 
 check_lib_cxx()	#$1 = HAVE_$1	$2 = lib	$3 = function in lib	$4 = extralibs	$5 = critical error message [checked only if non-empty]
@@ -66,6 +68,8 @@ check_lib_cxx()	#$1 = HAVE_$1	$2 = lib	$3 = function in lib	$4 = extralibs	$5 = 
 		}
 	
 	}
+
+	/bin/true
 }
 
 check_code_c()
@@ -108,7 +112,7 @@ check_pkgconf()	#$1 = HAVE_$1	$2 = package	$3 = version	$4 = critical error mess
 	[ "$3" ] && ECHOBUF="$ECHOBUF with minimum version $3"
 #	echo -n "$ECHOBUF ... "
 	answer='no'
-	pkg-config --atleast-version="${3:-0.0}" "$2" && {
+	$PKG_CONF_PATH --atleast-version="${3:-0.0}" "$2" && {
 		answer='yes'
 		eval $1_CFLAGS=\"$(pkg-config $2 --cflags)\"
 		eval $1_LIBS=\"$(pkg-config $2 --libs)\"

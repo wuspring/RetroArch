@@ -1,6 +1,6 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
- *  Copyright (C) 2011-2013 - Daniel De Matteis
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
+ *  Copyright (C) 2011-2014 - Daniel De Matteis
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -17,31 +17,34 @@
 #ifndef __FRONTEND_CONTEXT_H
 #define __FRONTEND_CONTEXT_H
 
+#include <stddef.h>
 #include "../boolean.h"
-#include "../driver.h"
 
 #ifdef HAVE_CONFIG_H
 #include "../config.h"
 #endif
 
-#if defined(HAVE_RGUI)
-#include "menu/rgui.h"
-#elif defined(HAVE_RMENU)
-#include "menu/rmenu.h"
+#ifdef __cplusplus
+extern "C" {
 #endif
+
+typedef void (*environment_get_t)(int *argc, char *argv[], void *args,
+   void *params_data);
+typedef void (*process_args_t)(int *argc, char *argv[]);
 
 typedef struct frontend_ctx_driver
 {
-   void (*environment_get)(int argc, char *argv[], void *args);
+   environment_get_t environment_get;
+   void (*init)(void *data);
+   void (*deinit)(void *data);
+   void (*exitspawn)(char *core_path, size_t sizeof_core_path);
 
-   void (*init)(void);
-   void (*deinit)(void);
-   void (*exitspawn)(void);
-
-   int (*process_args)(int argc, char *argv[], void *args);
-   int (*process_events)(void);
+   process_args_t process_args;
+   int (*process_events)(void *data);
    void (*exec)(const char *, bool);
    void (*shutdown)(bool);
+   void (*get_name)(char *, size_t);
+   int (*get_rating)(void);
 
    // Human readable string.
    const char *ident;
@@ -52,13 +55,15 @@ extern const frontend_ctx_driver_t frontend_ctx_ps3;
 extern const frontend_ctx_driver_t frontend_ctx_xdk;
 extern const frontend_ctx_driver_t frontend_ctx_qnx;
 extern const frontend_ctx_driver_t frontend_ctx_apple;
+extern const frontend_ctx_driver_t frontend_ctx_android;
+extern const frontend_ctx_driver_t frontend_ctx_psp;
+extern const frontend_ctx_driver_t frontend_ctx_null;
 
 const frontend_ctx_driver_t *frontend_ctx_find_driver(const char *ident); // Finds driver with ident. Does not initialize.
 const frontend_ctx_driver_t *frontend_ctx_init_first(void); // Finds first suitable driver and initializes.
 
-#ifdef RARCH_CONSOLE
-extern void rarch_make_dir(const char *x, const char *name);
-extern void rarch_get_environment_console(void);
+#ifdef __cplusplus
+}
 #endif
 
 #endif

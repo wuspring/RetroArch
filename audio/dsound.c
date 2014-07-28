@@ -1,6 +1,6 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
- *  Copyright (C) 2011-2013 - Daniel De Matteis
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
+ *  Copyright (C) 2011-2014 - Daniel De Matteis
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -46,6 +46,11 @@ static DSMIXBINS dsmb;
 #include <stdint.h>
 #include <string.h>
 
+#ifndef _XBOX
+// Need these includes in MinGW-w64 4.9 it seems ...
+#include <mmreg.h>
+#include <mmsystem.h>
+#endif
 #include <dsound.h>
 #include "../fifo_buffer.h"
 #include "../general.h"
@@ -54,15 +59,17 @@ typedef struct dsound
 {
    LPDIRECTSOUND ds;
    LPDIRECTSOUNDBUFFER dsb;
-   HANDLE event;
-   bool nonblock;
 
    fifo_buffer_t *buffer;
    CRITICAL_SECTION crit;
 
-   volatile bool thread_alive;
+   HANDLE event;
    HANDLE thread;
+
    unsigned buffer_size;
+
+   bool nonblock;
+   volatile bool thread_alive;
 } dsound_t;
 
 static inline unsigned write_avail(unsigned read_ptr, unsigned write_ptr, unsigned buffer_size)
@@ -80,8 +87,8 @@ static inline void get_positions(dsound_t *ds, DWORD *read_ptr, DWORD *write_ptr
 struct audio_lock
 {
    void *chunk1;
-   DWORD size1;
    void *chunk2;
+   DWORD size1;
    DWORD size2;
 };
 
@@ -260,7 +267,7 @@ static void dsound_free(void *data)
          IDirectSoundBuffer_Release(ds->dsb);
       }
 
-      if (ds)
+      if (ds->ds)
          IDirectSound_Release(ds->ds);
 
       if (ds->event)
@@ -355,18 +362,6 @@ static void *dsound_init(const char *device, unsigned rate, unsigned latency)
       goto error;
 
    IDirectSoundBuffer_SetVolume(ds->dsb, DSBVOLUME_MAX);
-
-#ifdef _XBOX
-   if(g_extern.console.sound.volume_level == 1)
-   {
-      dsmb.dwMixBinCount = 8;
-      dsmb.lpMixBinVolumePairs = dsmbvp;
-      
-      IDirectSoundBuffer_SetHeadroom(ds->dsb, DSBHEADROOM_MIN);
-      IDirectSoundBuffer_SetMixBins(ds->dsb, &dsmb);
-   }
-#endif
-
    IDirectSoundBuffer_SetCurrentPosition(ds->dsb, 0);
 
    dsound_clear_buffer(ds);

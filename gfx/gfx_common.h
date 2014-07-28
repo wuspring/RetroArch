@@ -1,5 +1,5 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -21,16 +21,18 @@ extern "C" {
 #endif
 
 #include <stddef.h>
+#include <stdint.h>
 #include "../general.h"
 #include "../boolean.h"
+#include "../performance.h"
 
 #ifdef HAVE_CONFIG_H
 #include "../config.h"
 #endif
 
-// If always_write is true, will always update FPS value
-// If always_write is false, returns true if FPS value was updated.
-bool gfx_get_fps(char *buf, size_t size, bool always_write);
+// bufs gets a string suitable for Window title, buf_fps for raw FPS only.
+// buf_fps is optional.
+bool gfx_get_fps(char *buf, size_t size, char *buf_fps, size_t size_fps);
 
 #ifdef _WIN32
 void gfx_set_dwm(void);
@@ -39,29 +41,12 @@ void gfx_set_dwm(void);
 void gfx_scale_integer(struct rarch_viewport *vp, unsigned win_width, unsigned win_height,
       float aspect_ratio, bool keep_aspect);
 
-typedef struct
-{
-   float x;
-   float y;
-   float scale;
-   unsigned color;
-} font_params_t;
-
-#define MIN_SCALING_FACTOR (1.0f)
-
-#if defined(__CELLOS_LV2__)
-#define MAX_SCALING_FACTOR (5.0f)
-#else
-#define MAX_SCALING_FACTOR (2.0f)
-#endif
-
 enum aspect_ratio
 {
    ASPECT_RATIO_4_3 = 0,
    ASPECT_RATIO_16_9,
    ASPECT_RATIO_16_10,
    ASPECT_RATIO_16_15,
-#ifdef RARCH_CONSOLE // None of these aspect ratios make any sense.
    ASPECT_RATIO_1_1,
    ASPECT_RATIO_2_1,
    ASPECT_RATIO_3_2,
@@ -77,7 +62,6 @@ enum aspect_ratio
    ASPECT_RATIO_19_14,
    ASPECT_RATIO_30_17,
    ASPECT_RATIO_32_9,
-#endif
    ASPECT_RATIO_CONFIG,
    ASPECT_RATIO_SQUARE,
    ASPECT_RATIO_CORE,
@@ -96,8 +80,6 @@ enum rotation
    ORIENTATION_FLIPPED_ROTATED,
    ORIENTATION_END
 };
-
-#define LAST_ORIENTATION (ORIENTATION_END - 1)
 
 extern char rotation_lut[4][32];
 

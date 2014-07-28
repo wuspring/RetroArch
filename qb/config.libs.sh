@@ -23,14 +23,14 @@ add_define_make DYLIB_LIB "$DYLIB"
 [ "$OS" = 'Darwin' ] && HAVE_X11=no # X11 breaks on recent OSXes even if present.
 
 [ -d /opt/vc/lib ] && add_library_dirs /opt/vc/lib
-check_lib VIDEOCORE -lbcm_host bcm_host_init "-lvcos -lvchiq_arm" 
+check_lib VIDEOCORE -lbcm_host bcm_host_init "-lvcos -lvchiq_arm"
 
 if [ "$HAVE_VIDEOCORE" = 'yes' ]; then
    [ -d /opt/vc/include ] && add_include_dirs /opt/vc/include
    [ -d /opt/vc/include/interface/vcos/pthreads ] && add_include_dirs /opt/vc/include/interface/vcos/pthreads
    [ -d /opt/vc/include/interface/vmcs_host/linux ] && add_include_dirs /opt/vc/include/interface/vmcs_host/linux
    HAVE_GLES='auto'
-   EXTRA_GL_LIBS="-lGLESv2 -lbcm_host -lvcos -lvchiq_arm"
+   EXTRA_GL_LIBS="-lEGL -lGLESv2 -lbcm_host -lvcos -lvchiq_arm"
 fi
 
 if [ "$HAVE_NEON" = "yes" ]; then
@@ -80,7 +80,14 @@ if [ "$HAVE_EGL" != "no" ]; then
    if [ "$HAVE_EGL" = "no" ]; then
       HAVE_EGL=auto && check_lib EGL "-lEGL $EXTRA_GL_LIBS"
       [ "$HAVE_EGL" = "yes" ] && EGL_LIBS=-lEGL
+   else
+      EGL_LIBS="$EGL_LIBS $EXTRA_GL_LIBS"
    fi
+fi
+
+if [ "$HAVE_EXYNOS" != "no" ]; then
+   check_pkgconf EXYNOS libdrm_exynos
+   check_pkgconf DRM libdrm
 fi
 
 if [ "$LIBRETRO" ]; then
@@ -165,12 +172,6 @@ else
    HAVE_CG='no'
 fi
 
-if [ "$HAVE_SDL" = "no" ]; then
-   echo "SDL is disabled. Disabling SDL_image."
-   HAVE_SDL_IMAGE=no
-fi
-check_pkgconf SDL_IMAGE SDL_image
-
 check_pkgconf ZLIB zlib
 
 if [ "$HAVE_THREADS" != 'no' ]; then
@@ -179,6 +180,7 @@ if [ "$HAVE_THREADS" != 'no' ]; then
       check_pkgconf AVFORMAT libavformat 54
       check_pkgconf AVUTIL libavutil 51
       check_pkgconf SWSCALE libswscale 2.1
+      check_header AV_CHANNEL_LAYOUT libavutil/channel_layout.h
       ( [ "$HAVE_FFMPEG" = 'auto' ] && ( [ "$HAVE_AVCODEC" = 'no' ] || [ "$HAVE_AVFORMAT" = 'no' ] || [ "$HAVE_AVUTIL" = 'no' ] || [ "$HAVE_SWSCALE" = 'no' ] ) && HAVE_FFMPEG='no' ) || HAVE_FFMPEG='yes'
    fi
 else
@@ -205,8 +207,14 @@ check_pkgconf LIBXML2 libxml-2.0
 
 if [ "$HAVE_EGL" = "yes" ]; then
    if [ "$HAVE_GLES" != "no" ]; then
-      HAVE_GLES=auto check_pkgconf GLES glesv2
-      [ "$HAVE_GLES" = "no" ] && HAVE_GLES=auto check_lib GLES "-lGLESv2 $EXTRA_GL_LIBS"
+      if [ "$GLES_LIBS" ] || [ "$GLES_CFLAGS" ]; then
+         echo "Using custom OpenGLES CFLAGS ($GLES_CFLAGS) and LDFLAGS ($GLES_LIBS)."
+         add_define_make GLES_LIBS "$GLES_LIBS"
+         add_define_make GLES_CFLAGS "$GLES_CFLAGS"
+      else
+         HAVE_GLES=auto check_pkgconf GLES glesv2
+         [ "$HAVE_GLES" = "no" ] && HAVE_GLES=auto check_lib GLES "-lGLESv2 $EXTRA_GL_LIBS" && add_define_make GLES_LIBS "-lGLESv2 $EXTRA_GL_LIBS"
+      fi
    fi
    if [ "$HAVE_VG" != "no" ]; then
       check_pkgconf VG vg
@@ -219,6 +227,8 @@ else
    HAVE_VG=no
    HAVE_GLES=no
 fi
+
+check_pkgconf V4L2 libv4l2
 
 if [ "$OS" = 'Darwin' ]; then
    check_lib FBO "-framework OpenGL" glFramebufferTexture2D
@@ -234,6 +244,7 @@ check_pkgconf FREETYPE freetype2
 check_pkgconf X11 x11
 [ "$HAVE_X11" = "no" ] && HAVE_XEXT=no && HAVE_XF86VM=no && HAVE_XINERAMA=no
 
+check_pkgconf XKBCOMMON xkbcommon 0.3.2
 check_pkgconf XEXT xext
 check_pkgconf XF86VM xxf86vm
 check_pkgconf XINERAMA xinerama
@@ -245,7 +256,17 @@ else
    HAVE_XVIDEO='no'
 fi
 
+if [ "$HAVE_UDEV" != "no" ]; then
+   check_pkgconf UDEV libudev
+   if [ "$HAVE_UDEV" = "no" ]; then
+      HAVE_UDEV=auto && check_lib UDEV "-ludev"
+      [ "$HAVE_UDEV" = "yes" ] && UDEV_LIBS=-ludev
+   fi
+fi
+
 check_lib STRL -lc strlcpy
+check_lib STRCASESTR -lc strcasestr
+check_lib MMAP -lc mmap
 
 check_pkgconf PYTHON python3
 
@@ -255,6 +276,6 @@ add_define_make OS "$OS"
 
 # Creates config.mk and config.h.
 add_define_make GLOBAL_CONFIG_DIR "$GLOBAL_CONFIG_DIR"
-VARS="RGUI ALSA OSS OSS_BSD OSS_LIB AL RSOUND ROAR JACK COREAUDIO PULSE SDL OPENGL GLES VG EGL KMS GBM DRM DYLIB GETOPT_LONG THREADS CG LIBXML2 SDL_IMAGE ZLIB DYNAMIC FFMPEG AVCODEC AVFORMAT AVUTIL SWSCALE FREETYPE XVIDEO X11 XEXT XF86VM XINERAMA NETPLAY NETWORK_CMD STDIN_CMD COMMAND SOCKET_LEGACY FBO STRL PYTHON FFMPEG_ALLOC_CONTEXT3 FFMPEG_AVCODEC_OPEN2 FFMPEG_AVIO_OPEN FFMPEG_AVFORMAT_WRITE_HEADER FFMPEG_AVFORMAT_NEW_STREAM FFMPEG_AVCODEC_ENCODE_AUDIO2 FFMPEG_AVCODEC_ENCODE_VIDEO2 BSV_MOVIE VIDEOCORE NEON FLOATHARD FLOATSOFTFP"
+VARS="RGUI LAKKA ALSA OSS OSS_BSD OSS_LIB AL RSOUND ROAR JACK COREAUDIO PULSE SDL OPENGL OMAP GLES GLES3 VG EGL KMS EXYNOS GBM DRM DYLIB GETOPT_LONG THREADS CG LIBXML2 ZLIB DYNAMIC FFMPEG AVCODEC AVFORMAT AVUTIL SWSCALE FREETYPE XKBCOMMON XVIDEO X11 XEXT XF86VM XINERAMA MALI_FBDEV VIVANTE_FBDEV NETPLAY NETWORK_CMD STDIN_CMD COMMAND SOCKET_LEGACY FBO STRL STRCASESTR MMAP PYTHON FFMPEG_ALLOC_CONTEXT3 FFMPEG_AVCODEC_OPEN2 FFMPEG_AVIO_OPEN FFMPEG_AVFORMAT_WRITE_HEADER FFMPEG_AVFORMAT_NEW_STREAM FFMPEG_AVCODEC_ENCODE_AUDIO2 FFMPEG_AVCODEC_ENCODE_VIDEO2 BSV_MOVIE VIDEOCORE NEON FLOATHARD FLOATSOFTFP UDEV V4L2 AV_CHANNEL_LAYOUT"
 create_config_make config.mk $VARS
 create_config_header config.h $VARS

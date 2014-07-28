@@ -1,6 +1,6 @@
 /* RetroArch - A frontend for libretro.
- * Copyright (C) 2010-2013 - Hans-Kristian Arntzen
- * Copyright (C) 2011-2013 - Daniel De Matteis
+ * Copyright (C) 2010-2014 - Hans-Kristian Arntzen
+ * Copyright (C) 2011-2014 - Daniel De Matteis
  *
  * RetroArch is free software: you can redistribute it and/or modify it under the terms
  * of the GNU General Public License as published by the Free Software Found-
@@ -19,25 +19,13 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "../conf/config_file.h"
+#include "../general.h"
+#include "../file.h"
 #include "../file_ext.h"
-#include "frontend_salamander.h"
-
-#if defined(RARCH_CONSOLE)
 #include "frontend_context.h"
-frontend_ctx_driver_t *frontend_ctx;
-#endif
 
-#if defined(__CELLOS_LV2__)
-#include "platform/platform_ps3.c"
-#elif defined(GEKKO)
-#include "platform/platform_gx.c"
-#elif defined(_XBOX)
-#include "platform/platform_xdk.c"
-#elif defined(PSP)
-#include "platform/platform_psp.c"
-#endif
-
-default_paths_t default_paths;
+struct defaults g_defaults;
 
 //We need to set libretro to the first entry in the cores
 //directory so that it will be saved to the config file
@@ -45,68 +33,136 @@ static void find_first_libretro_core(char *first_file,
    size_t size_of_first_file, const char *dir,
    const char * ext)
 {
+   struct string_list *list;
+   size_t i;
    bool ret = false;
 
    RARCH_LOG("Searching for valid libretro implementation in: \"%s\".\n", dir);
 
-   struct string_list *list = dir_list_new(dir, ext, false);
+   list = (struct string_list*)dir_list_new(dir, ext, false);
    if (!list)
    {
       RARCH_ERR("Couldn't read directory. Cannot infer default libretro core.\n");
       return;
    }
    
-   for (size_t i = 0; i < list->size && !ret; i++)
+   for (i = 0; i < list->size && !ret; i++)
    {
-      RARCH_LOG("Checking library: \"%s\".\n", list->elems[i].data);
-      const char * libretro_elem = list->elems[i].data;
+      char fname[PATH_MAX];
+      const char *libretro_elem = (const char*)list->elems[i].data;
 
-      if (libretro_elem)
+      RARCH_LOG("Checking library: \"%s\".\n", libretro_elem);
+
+      if (!libretro_elem)
+         continue;
+
+      fill_pathname_base(fname, libretro_elem, sizeof(fname));
+
+      if (strncmp(fname, SALAMANDER_FILE, sizeof(fname)) == 0)
       {
-         char fname[PATH_MAX];
-         fill_pathname_base(fname, libretro_elem, sizeof(fname));
-
-         if (strncmp(fname, SALAMANDER_FILE, sizeof(fname)) == 0)
+         if ((i + 1) == list->size)
          {
-            if ((i + 1) == list->size)
-            {
-               RARCH_WARN("Entry is RetroArch Salamander itself, but is last entry. No choice but to set it.\n");
-               strlcpy(first_file, fname, size_of_first_file);
-            }
-
-            continue;
+            RARCH_WARN("Entry is RetroArch Salamander itself, but is last entry. No choice but to set it.\n");
+            strlcpy(first_file, fname, size_of_first_file);
          }
 
-         strlcpy(first_file, fname, size_of_first_file);
-         RARCH_LOG("First found libretro core is: \"%s\".\n", first_file);
-         ret = true;
+         continue;
       }
+
+      strlcpy(first_file, fname, size_of_first_file);
+      RARCH_LOG("First found libretro core is: \"%s\".\n", first_file);
+      ret = true;
    }
 
    dir_list_free(list);
 }
 
-static int system_ctx_init(void)
+static void find_and_set_first_file(char *path, size_t sizeof_path, const char *ext)
 {
-#ifdef RARCH_CONSOLE
-   if ((frontend_ctx = (frontend_ctx_driver_t*)frontend_ctx_init_first()) == NULL)
-      return -1;
-#endif
+   //Last fallback - we'll need to start the first executable file 
+   // we can find in the RetroArch cores directory
 
-   return 0;
+   char first_file[PATH_MAX] = {0};
+   find_first_libretro_core(first_file, sizeof(first_file),
+         g_defaults.core_dir, ext);
+
+   if (first_file)
+   {
+      fill_pathname_join(path, g_defaults.core_dir, first_file, sizeof_path);
+      RARCH_LOG("libretro_path now set to: %s.\n", path);
+   }
+   else
+      RARCH_ERR("Failed last fallback - RetroArch Salamander will exit.\n");
+}
+
+static void salamander_init(char *libretro_path, size_t sizeof_libretro_path)
+{
+   //normal executable loading path
+   bool config_file_exists = false;
+
+   if (path_file_exists(g_defaults.config_path))
+      config_file_exists = true;
+
+   if (config_file_exists)
+   {
+      char tmp_str[PATH_MAX];
+      config_file_t * conf = (config_file_t*)config_file_new(g_defaults.config_path);
+
+      if (conf)
+      {
+         config_get_array(conf, "libretro_path", tmp_str, sizeof(tmp_str));
+         config_file_free(conf);
+         strlcpy(libretro_path, tmp_str, sizeof_libretro_path);
+      }
+#ifdef GEKKO
+      else // stupid libfat bug or something; somtimes it says the file is there when it doesn't
+         config_file_exists = false;
+#endif
+   }
+
+   if (!config_file_exists || !strcmp(libretro_path, ""))
+      find_and_set_first_file(libretro_path, sizeof_libretro_path, EXT_EXECUTABLES);
+   else
+      RARCH_LOG("Start [%s] found in retroarch.cfg.\n", libretro_path);
+
+   if (!config_file_exists)
+   {
+      config_file_t *conf = (config_file_t*)config_file_new(NULL);
+
+      if (conf)
+      {
+         config_set_string(conf, "libretro_path", libretro_path);
+         config_file_write(conf, g_defaults.config_path);
+         config_file_free(conf);
+      }
+   }
 }
 
 int main(int argc, char *argv[])
 {
+   char libretro_path[PATH_MAX];
    void *args = NULL;
-   if (system_ctx_init() != 0)
+   struct rarch_main_wrap *wrap_args;
+
+   frontend_ctx_driver_t *frontend_ctx = (frontend_ctx_driver_t*)frontend_ctx_init_first();
+   wrap_args = NULL;
+
+   if (!frontend_ctx)
       return 0;
 
-   frontend_ctx->init();
-   get_environment_settings(argc, argv, args);
-   salamander_init_settings();
-   frontend_ctx->deinit();
-   frontend_ctx->exitspawn();
+   if (frontend_ctx && frontend_ctx->init)
+      frontend_ctx->init(args);
+
+   if (frontend_ctx && frontend_ctx->environment_get)
+      frontend_ctx->environment_get(&argc, argv, args, wrap_args);
+
+   salamander_init(libretro_path, sizeof(libretro_path));
+
+   if (frontend_ctx && frontend_ctx->deinit)
+      frontend_ctx->deinit(args);
+
+   if (frontend_ctx && frontend_ctx->exitspawn)
+      frontend_ctx->exitspawn(libretro_path, sizeof(libretro_path));
 
    return 1;
 }

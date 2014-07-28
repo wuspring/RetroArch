@@ -49,10 +49,19 @@ Darren Alton -
 
 Fabian Knopf -
    - WGL multi-monitor support
-   - D3D9 overlay, multi-monitor and RGUI support
+   - D3D9 overlay, multi-monitor and menu support
 
 Gražvydas Ignotas -
    - ARM Linux patches
 
 Saggi Mizrahi - 
    - RetroLaunch utility
+
+Alfred Agrell - <floating@muncher.se>
+   - Rewritten savestate manager
+   
+Jean-André Santoni - <jean.andre.santoni@gmail.com>
+   - Lakka menu driver
+
+Morgane Alonso -
+   - Lakka menu driver (graphic design)

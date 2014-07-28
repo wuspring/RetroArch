@@ -1,6 +1,6 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
- *  Copyright (C) 2011-2013 - Daniel De Matteis
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
+ *  Copyright (C) 2011-2014 - Daniel De Matteis
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -82,52 +82,8 @@ static void xenon360_input_free_input(void *data)
    (void)data;
 }
 
-static void xenon360_input_set_keybinds(void *data, unsigned device,
-      unsigned port, unsigned id, unsigned keybind_action)
-{
-   (void)data;
-   (void)device;
-   (void)id;
-
-   if (keybind_action & (1ULL << KEYBINDS_ACTION_SET_DEFAULT_BINDS))
-   {
-      for (unsigned i = 0; i < RARCH_CUSTOM_BIND_LIST_END; i++)
-      {
-         g_settings.input.binds[port][i].id = i;
-         g_settings.input.binds[port][i].joykey = g_settings.input.binds[port][i].def_joykey;
-      }
-      g_settings.input.dpad_emulation[port] = ANALOG_DPAD_LSTICK;
-   }
-}
-
 static void* xenon360_input_init(void)
 {
-   for(unsigned i = 0; i < MAX_PLAYERS; i++)
-      xenon360_input_set_keybinds(driver.input_data, 0, i,
-            (1ULL << KEYBINDS_ACTION_SET_DEFAULT_BINDS));
-
-   for(unsigned i = 0; i < MAX_PADS; i++)
-   {
-      unsigned keybind_action = 0;
-
-      switch (g_settings.input.dpad_emulation[i])
-      {
-         case ANALOG_DPAD_LSTICK:
-            keybind_action = (1ULL << KEYBINDS_ACTION_SET_ANALOG_DPAD_LSTICK);
-            break;
-         case ANALOG_DPAD_RSTICK:
-            keybind_action = (1ULL << KEYBINDS_ACTION_SET_ANALOG_DPAD_RSTICK);
-            break;
-         case ANALOG_DPAD_NONE:
-            keybind_action = (1ULL << KEYBINDS_ACTION_SET_ANALOG_DPAD_NONE);
-         default:
-            break;
-      }
-
-      if (keybind_action)
-         xenon360_input_set_keybinds(driver.input_data, 0, i, keybind_action);
-   }
-
    return (void*)-1;
 }
 
@@ -136,13 +92,24 @@ static bool xenon360_input_key_pressed(void *data, int key)
    return (g_extern.lifecycle_state & (1ULL << key));
 }
 
+static uint64_t xenon360_get_capabilities(void *data)
+{
+   uint64_t caps = 0;
+
+   caps |= (1 << RETRO_DEVICE_JOYPAD);
+
+   return caps;
+}
 
 const input_driver_t input_xenon360 = {
-   .init = xenon360_input_init,
-   .poll = xenon360_input_poll,
-   .input_state = xenon360_input_state,
-   .key_pressed = xenon360_input_key_pressed,
-   .free = xenon360_input_free_input,
-   .set_keybinds = xenon360_input_set_keybinds,
-   .ident = "xenon360",
+   xenon360_input_init,
+   xenon360_input_poll,
+   xenon360_input_state,
+   xenon360_input_key_pressed,
+   xenon360_input_free_input,
+   NULL,
+   NULL,
+   NULL,
+   xenon360_input_get_capabilities,
+   "xenon360",
 };

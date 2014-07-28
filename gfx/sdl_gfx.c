@@ -1,5 +1,5 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -70,7 +70,9 @@ static void sdl_init_font(sdl_video_t *vid, const char *font_path, unsigned font
    if (!g_settings.video.font_enable)
       return;
 
-   if (font_renderer_create_default(&vid->font_driver, &vid->font))
+   if (font_renderer_create_default(&vid->font_driver, &vid->font,
+            *g_settings.video.font_path ? g_settings.video.font_path : NULL,
+            g_settings.video.font_size))
    {
          int r = g_settings.video.msg_color_r * 255;
          int g = g_settings.video.msg_color_g * 255;
@@ -91,29 +93,34 @@ static void sdl_init_font(sdl_video_t *vid, const char *font_path, unsigned font
 static void sdl_render_msg(sdl_video_t *vid, SDL_Surface *buffer,
       const char *msg, unsigned width, unsigned height, const SDL_PixelFormat *fmt)
 {
+   int x, y, msg_base_x, msg_base_y, delta_x, delta_y;
+   unsigned rshift, gshift, bshift;
+
    if (!vid->font)
       return;
 
-   struct font_output_list out;
-   vid->font_driver->render_msg(vid->font, msg, &out);
-   struct font_output *head = out.head;
+   const struct font_atlas *atlas = vid->font_driver->get_atlas(vid->font);
 
-   int msg_base_x = g_settings.video.msg_pos_x * width;
-   int msg_base_y = (1.0 - g_settings.video.msg_pos_y) * height;
+   msg_base_x = g_settings.video.msg_pos_x * width;
+   msg_base_y = (1.0f - g_settings.video.msg_pos_y) * height;
 
-   unsigned rshift = fmt->Rshift;
-   unsigned gshift = fmt->Gshift;
-   unsigned bshift = fmt->Bshift;
+   rshift = fmt->Rshift;
+   gshift = fmt->Gshift;
+   bshift = fmt->Bshift;
 
-   for (; head; head = head->next)
+   for (; *msg; msg++)
    {
-      int base_x = msg_base_x + head->off_x;
-      int base_y = msg_base_y - head->off_y - head->height;
+      const struct font_glyph *glyph = vid->font_driver->get_glyph(vid->font, (uint8_t)*msg);
+      if (!glyph)
+         continue;
 
-      int glyph_width  = head->width;
-      int glyph_height = head->height;
+      int glyph_width  = glyph->width;
+      int glyph_height = glyph->height;
 
-      const uint8_t *src = head->output;
+      int base_x = msg_base_x + glyph->draw_offset_x;
+      int base_y = msg_base_y + glyph->draw_offset_y;
+
+      const uint8_t *src = atlas->buffer + glyph->atlas_offset_x + glyph->atlas_offset_y * atlas->width;
 
       if (base_x < 0)
       {
@@ -124,7 +131,7 @@ static void sdl_render_msg(sdl_video_t *vid, SDL_Surface *buffer,
 
       if (base_y < 0)
       {
-         src -= base_y * (int)head->pitch;
+         src -= base_y * (int)atlas->width;
          glyph_height += base_y;
          base_y = 0;
       }
@@ -142,9 +149,9 @@ static void sdl_render_msg(sdl_video_t *vid, SDL_Surface *buffer,
 
       uint32_t *out = (uint32_t*)buffer->pixels + base_y * (buffer->pitch >> 2) + base_x;
 
-      for (int y = 0; y < glyph_height; y++, src += head->pitch, out += buffer->pitch >> 2)
+      for (y = 0; y < glyph_height; y++, src += atlas->width, out += buffer->pitch >> 2)
       {
-         for (int x = 0; x < glyph_width; x++)
+         for (x = 0; x < glyph_width; x++)
          {
             unsigned blend = src[x];
             unsigned out_pix = out[x];
@@ -158,9 +165,10 @@ static void sdl_render_msg(sdl_video_t *vid, SDL_Surface *buffer,
             out[x] = (out_r << rshift) | (out_g << gshift) | (out_b << bshift);
          }
       }
-   }
 
-   vid->font_driver->free_output(vid->font, &out);
+      msg_base_x += glyph->advance_x;
+      msg_base_y += glyph->advance_y;
+   }
 }
 
 static void sdl_gfx_set_handles(void)
@@ -304,7 +312,11 @@ static bool sdl_gfx_frame(void *data, const void *frame, unsigned width, unsigne
    if (SDL_MUSTLOCK(vid->screen))
       SDL_LockSurface(vid->screen);
 
+   RARCH_PERFORMANCE_INIT(sdl_scale);
+   RARCH_PERFORMANCE_START(sdl_scale);
    scaler_ctx_scale(&vid->scaler, vid->screen->pixels, frame);
+   RARCH_PERFORMANCE_STOP(sdl_scale);
+
    if (msg)
       sdl_render_msg(vid, vid->screen, msg, vid->screen->w, vid->screen->h, vid->screen->format);
 
@@ -312,7 +324,7 @@ static bool sdl_gfx_frame(void *data, const void *frame, unsigned width, unsigne
       SDL_UnlockSurface(vid->screen);
 
    char buf[128];
-   if (gfx_get_fps(buf, sizeof(buf), false))
+   if (gfx_get_fps(buf, sizeof(buf), NULL, 0))
       SDL_WM_SetCaption(buf, NULL);
 
    SDL_Flip(vid->screen);
@@ -357,11 +369,6 @@ const video_driver_t video_sdl = {
    NULL,
    sdl_gfx_free,
    "sdl",
-
-#ifdef HAVE_RGUI
-   NULL,
-   NULL,
-#endif
 
    NULL,
    sdl_gfx_viewport_info,

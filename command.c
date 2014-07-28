@@ -1,5 +1,5 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -24,6 +24,7 @@
 #include "general.h"
 #include "compat/strl.h"
 #include "compat/posix_string.h"
+#include "file_path.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -195,7 +196,6 @@ static const struct cmd_map map[] = {
    { "CHEAT_INDEX_MINUS",      RARCH_CHEAT_INDEX_MINUS },
    { "CHEAT_TOGGLE",           RARCH_CHEAT_TOGGLE },
    { "SCREENSHOT",             RARCH_SCREENSHOT },
-   { "DSP_CONFIG",             RARCH_DSP_CONFIG },
    { "MUTE",                   RARCH_MUTE },
    { "NETPLAY_FLIP",           RARCH_NETPLAY_FLIP },
    { "SLOWMOTION",             RARCH_SLOWMOTION },
@@ -214,15 +214,12 @@ static bool cmd_set_shader(const char *arg)
       return false;
 
    enum rarch_shader_type type = RARCH_SHADER_NONE;
-   const char *ext = strrchr(arg, '.');
+   const char *ext = path_get_extension(arg);
 
-   if (ext)
-   {
-      if (strcmp(ext, ".shader") == 0)
-         type = RARCH_SHADER_GLSL;
-      else if (strcmp(ext, ".cg") == 0 || strcmp(ext, ".cgp") == 0)
-         type = RARCH_SHADER_CG;
-   }
+   if (strcmp(ext, "glsl") == 0 || strcmp(ext, "glslp") == 0)
+      type = RARCH_SHADER_GLSL;
+   else if (strcmp(ext, "cg") == 0 || strcmp(ext, "cgp") == 0)
+      type = RARCH_SHADER_CG;
 
    if (type == RARCH_SHADER_NONE)
       return false;
@@ -243,7 +240,8 @@ static const struct cmd_action_map action_map[] = {
 
 static bool command_get_arg(const char *tok, const char **arg, unsigned *index)
 {
-   for (unsigned i = 0; i < ARRAY_SIZE(map); i++)
+   unsigned i;
+   for (i = 0; i < ARRAY_SIZE(map); i++)
    {
       if (strcmp(tok, map[i].str) == 0)
       {
@@ -257,7 +255,7 @@ static bool command_get_arg(const char *tok, const char **arg, unsigned *index)
       }
    }
 
-   for (unsigned i = 0; i < ARRAY_SIZE(action_map); i++)
+   for (i = 0; i < ARRAY_SIZE(action_map); i++)
    {
       const char *str = strstr(tok, action_map[i].str);
       if (str == tok)
@@ -300,7 +298,7 @@ static void parse_sub_msg(rarch_cmd_t *handle, const char *tok)
 
 static void parse_msg(rarch_cmd_t *handle, char *buf)
 {
-   char *save;
+   char *save = NULL;
    const char *tok = strtok_r(buf, "\n", &save);
    while (tok)
    {
@@ -321,7 +319,7 @@ bool rarch_cmd_get(rarch_cmd_t *handle, unsigned id)
 }
 
 #ifdef HAVE_NETWORK_CMD
-static void network_cmd_pre_frame(rarch_cmd_t *handle)
+static void network_cmd_poll(rarch_cmd_t *handle)
 {
    if (handle->net_fd < 0)
       return;
@@ -356,6 +354,7 @@ static void network_cmd_pre_frame(rarch_cmd_t *handle)
 // Oh you, Win32 ... <_<
 static size_t read_stdin(char *buf, size_t size)
 {
+   DWORD i;
    HANDLE hnd = GetStdHandle(STD_INPUT_HANDLE);
    if (hnd == INVALID_HANDLE_VALUE)
       return 0;
@@ -383,7 +382,7 @@ static size_t read_stdin(char *buf, size_t size)
          return 0;
 
       bool has_key = false;
-      for (DWORD i = 0; i < has_read; i++)
+      for (i = 0; i < has_read; i++)
       {
          // Very crude, but should get the job done ...
          if (recs[i].EventType == KEY_EVENT &&
@@ -414,7 +413,7 @@ static size_t read_stdin(char *buf, size_t size)
    if (!ReadFile(hnd, buf, avail, &has_read, NULL))
       return 0;
 
-   for (DWORD i = 0; i < has_read; i++)
+   for (i = 0; i < has_read; i++)
       if (buf[i] == '\r')
          buf[i] = '\n';
 
@@ -451,7 +450,7 @@ static size_t read_stdin(char *buf, size_t size)
 }
 #endif
 
-static void stdin_cmd_pre_frame(rarch_cmd_t *handle)
+static void stdin_cmd_poll(rarch_cmd_t *handle)
 {
    if (!handle->stdin_enable)
       return;
@@ -487,16 +486,16 @@ static void stdin_cmd_pre_frame(rarch_cmd_t *handle)
 }
 #endif
 
-void rarch_cmd_pre_frame(rarch_cmd_t *handle)
+void rarch_cmd_poll(rarch_cmd_t *handle)
 {
    memset(handle->state, 0, sizeof(handle->state));
 
 #ifdef HAVE_NETWORK_CMD
-   network_cmd_pre_frame(handle);
+   network_cmd_poll(handle);
 #endif
 
 #ifdef HAVE_STDIN_CMD
-   stdin_cmd_pre_frame(handle);
+   stdin_cmd_poll(handle);
 #endif
 }
 
@@ -533,8 +532,8 @@ static bool send_udp_packet(const char *host, uint16_t port, const char *msg)
       }
 
       ssize_t len = strlen(msg);
-      ssize_t ret = sendto(fd, msg, len, 0, tmp->ai_addr, tmp->ai_addrlen);
-      if (ret < len)
+      ssize_t ret_len = sendto(fd, msg, len, 0, tmp->ai_addr, tmp->ai_addrlen);
+      if (ret_len < len)
       {
          ret = false;
          goto end;
@@ -554,15 +553,16 @@ end:
 
 static bool verify_command(const char *cmd)
 {
+   unsigned i;
    if (command_get_arg(cmd, NULL, NULL))
       return true;
 
    RARCH_ERR("Command \"%s\" is not recognized by RetroArch.\n", cmd);
    RARCH_ERR("\tValid commands:\n");
-   for (unsigned i = 0; i < sizeof(map) / sizeof(map[0]); i++)
+   for (i = 0; i < sizeof(map) / sizeof(map[0]); i++)
       RARCH_ERR("\t\t%s\n", map[i].str);
 
-   for (unsigned i = 0; i < sizeof(action_map) / sizeof(action_map[0]); i++)
+   for (i = 0; i < sizeof(action_map) / sizeof(action_map[0]); i++)
       RARCH_ERR("\t\t%s %s\n", action_map[i].str, action_map[i].arg_desc);
 
    return false;
@@ -571,14 +571,14 @@ static bool verify_command(const char *cmd)
 bool network_cmd_send(const char *cmd_)
 {
    if (!netplay_init_network())
-      return NULL;
+      return false;
 
    char *command = strdup(cmd_);
    if (!command)
       return false;
 
-   bool old_verbose = g_extern.verbose;
-   g_extern.verbose = true;
+   bool old_verbose = g_extern.verbosity;
+   g_extern.verbosity = true;
 
    const char *cmd = NULL;
    const char *host = NULL;
@@ -609,7 +609,7 @@ bool network_cmd_send(const char *cmd_)
    bool ret = verify_command(cmd) && send_udp_packet(host, port, cmd);
    free(command);
 
-   g_extern.verbose = old_verbose;
+   g_extern.verbosity = old_verbose;
    return ret;
 }
 #endif

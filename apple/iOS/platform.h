@@ -1,6 +1,6 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2013 - Jason Fetters
- *  Copyright (C) 2011-2013 - Daniel De Matteis
+ *  Copyright (C) 2013-2014 - Jason Fetters
+ *  Copyright (C) 2011-2014 - Daniel De Matteis
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -17,32 +17,43 @@
 #ifndef __RARCH_IOS_PLATFORM_H
 #define __RARCH_IOS_PLATFORM_H
 
+#include <CoreLocation/CoreLocation.h>
+#import <AVFoundation/AVCaptureOutput.h>
 #include "views.h"
 
-@interface RAGameView : UIViewController
+typedef struct
+{
+   char orientations[32];
+   unsigned orientation_flags;
+   char bluetooth_mode[64];
+} apple_frontend_settings_t;
+extern apple_frontend_settings_t apple_frontend_settings;
+
+const void* apple_get_frontend_settings(void);
+
+@interface RAGameView : UIViewController<CLLocationManagerDelegate, AVCaptureAudioDataOutputSampleBufferDelegate>
 + (RAGameView*)get;
-- (void)openPauseMenu;
-- (void)closePauseMenu;
 @end
 
-@interface RetroArch_iOS : UINavigationController<UIApplicationDelegate, UINavigationControllerDelegate, RetroArch_Platform,
-                                                   RADirectoryListDelegate, RAModuleListDelegate>
+@interface RetroArch_iOS : UINavigationController<UIApplicationDelegate, UINavigationControllerDelegate, RetroArch_Platform>
 
 + (RetroArch_iOS*)get;
 
-- (void)loadingCore:(RAModuleInfo*)core withFile:(const char*)file;
-- (void)unloadingCore:(RAModuleInfo*)core;
-- (NSString*)retroarchConfigPath;
+- (void)showGameView;
+
+- (void)loadingCore:(NSString*)core withFile:(const char*)file;
+- (void)unloadingCore;
 
 - (void)refreshSystemConfig;
 
-@property (strong, nonatomic) NSString* documentsDirectory; // e.g. /var/mobile/Documents
-@property (strong, nonatomic) NSString* systemDirectory;    // e.g. /var/mobile/Documents/.RetroArch
-@property (strong, nonatomic) NSString* systemConfigPath;   // e.g. /var/mobile/Documents/.RetroArch/frontend.cfg
+@property (nonatomic) NSString* documentsDirectory; // e.g. /var/mobile/Documents
 
 @end
 
 // modes are: keyboard, icade and btstack
-void ios_set_bluetooth_mode(NSString* mode);
+int get_ios_version_major(void);
+
+#define IOS_IS_VERSION_7_OR_HIGHER() ((get_ios_version_major() >= 7))
+#define IOS_IS_VERSION_6_OR_LOWER() ((get_ios_version_major() <= 6))
 
 #endif

@@ -1,4 +1,3 @@
-## lvl. 43 regex dragon awaits thee.
 print_help()
 {	cat << EOF
 ====================
@@ -62,10 +61,10 @@ parse_input() # Parse stuff :V
 				eval "HAVE_$opt=no"
 			;;
 			--with-*)
-				arg=${1##--with-}
-				val=${arg##*=}
+				arg="${1##--with-}"
+				val="${arg##*=}"
 				opt_exists "${arg%%=*}"
-				eval "$opt=$val"
+				eval "$opt=\"$val\""
 			;;
 			-h|--help) print_help; exit 0;;
 			*) print_help; exit 1;;

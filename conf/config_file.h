@@ -1,5 +1,5 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -98,6 +98,7 @@ void config_set_hex(config_file_t *conf, const char *entry, unsigned val);
 void config_set_uint64(config_file_t *conf, const char *entry, uint64_t val);
 void config_set_char(config_file_t *conf, const char *entry, char val);
 void config_set_string(config_file_t *conf, const char *entry, const char *val);
+void config_set_path(config_file_t *conf, const char *entry, const char *val);
 void config_set_bool(config_file_t *conf, const char *entry, bool val);
 
 // Write the current config to a file.
@@ -106,7 +107,7 @@ bool config_file_write(config_file_t *conf, const char *path);
 // Dump the current config to an already opened file. Does not close the file.
 void config_file_dump(config_file_t *conf, FILE *file);
 // Also dumps inherited values, useful for logging.
-void config_file_dump_all(config_file_t *conf, FILE *file);
+void config_file_dump_all(config_file_t *conf);
 
 #ifdef __cplusplus
 }

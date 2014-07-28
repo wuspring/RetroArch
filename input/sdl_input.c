@@ -1,5 +1,5 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -30,7 +30,7 @@ typedef struct sdl_input
 
    int mouse_x, mouse_y;
    int mouse_abs_x, mouse_abs_y;
-   int mouse_l, mouse_r, mouse_m;
+   int mouse_l, mouse_r, mouse_m, mouse_wu, mouse_wd;
 } sdl_input_t;
 
 static void *sdl_input_init(void)
@@ -67,6 +67,18 @@ static bool sdl_is_pressed(sdl_input_t *sdl, unsigned port_num, const struct ret
    return input_joypad_pressed(sdl->joypad, port_num, binds, key);
 }
 
+static int16_t sdl_analog_pressed(sdl_input_t *sdl, const struct retro_keybind *binds,
+      unsigned index, unsigned id)
+{
+   unsigned id_minus = 0;
+   unsigned id_plus  = 0;
+   input_conv_analog_id_to_bind_id(index, id, &id_minus, &id_plus);
+
+   int16_t pressed_minus = sdl_key_pressed(binds[id_minus].key) ? -0x7fff : 0;
+   int16_t pressed_plus = sdl_key_pressed(binds[id_plus].key) ? 0x7fff : 0;
+   return pressed_plus + pressed_minus;
+}
+
 static bool sdl_bind_button_pressed(void *data, int key)
 {
    const struct retro_keybind *binds = g_settings.input.binds[0];
@@ -89,7 +101,10 @@ static int16_t sdl_joypad_device_state(sdl_input_t *sdl, const struct retro_keyb
 static int16_t sdl_analog_device_state(sdl_input_t *sdl, const struct retro_keybind **binds,
       unsigned port_num, unsigned index, unsigned id)
 {
-   return input_joypad_analog(sdl->joypad, port_num, index, id, binds[port_num]);
+   int16_t ret = sdl_analog_pressed(sdl, binds[port_num], index, id);
+   if (!ret)
+      ret = input_joypad_analog(sdl->joypad, port_num, index, id, binds[port_num]);
+   return ret;
 }
 
 static int16_t sdl_keyboard_device_state(sdl_input_t *sdl, unsigned id)
@@ -105,10 +120,16 @@ static int16_t sdl_mouse_device_state(sdl_input_t *sdl, unsigned id)
          return sdl->mouse_l;
       case RETRO_DEVICE_ID_MOUSE_RIGHT:
          return sdl->mouse_r;
+      case RETRO_DEVICE_ID_MOUSE_WHEELUP:
+         return sdl->mouse_wu;
+      case RETRO_DEVICE_ID_MOUSE_WHEELDOWN:
+         return sdl->mouse_wd;
       case RETRO_DEVICE_ID_MOUSE_X:
          return sdl->mouse_x;
       case RETRO_DEVICE_ID_MOUSE_Y:
          return sdl->mouse_y;
+      case RETRO_DEVICE_ID_MOUSE_MIDDLE:
+         return sdl->mouse_m;
       default:
          return 0;
    }
@@ -214,13 +235,27 @@ static void sdl_input_free(void *data)
    free(data);
 }
 
+static bool sdl_set_rumble(void *data, unsigned port, enum retro_rumble_effect effect, uint16_t strength)
+{
+   sdl_input_t *sdl = (sdl_input_t*)data;
+   return input_joypad_set_rumble(sdl->joypad, port, effect, strength);
+}
+
+static const rarch_joypad_driver_t *sdl_get_joypad_driver(void *data)
+{
+   sdl_input_t *sdl = (sdl_input_t*)data;
+   return sdl->joypad;
+}
+
 static void sdl_poll_mouse(sdl_input_t *sdl)
 {
    Uint8 btn = SDL_GetRelativeMouseState(&sdl->mouse_x, &sdl->mouse_y);
    SDL_GetMouseState(&sdl->mouse_abs_x, &sdl->mouse_abs_y);
-   sdl->mouse_l = SDL_BUTTON(SDL_BUTTON_LEFT) & btn ? 1 : 0;
-   sdl->mouse_r = SDL_BUTTON(SDL_BUTTON_RIGHT) & btn ? 1 : 0;
-   sdl->mouse_m = SDL_BUTTON(SDL_BUTTON_MIDDLE) & btn ? 1 : 0;
+   sdl->mouse_l  = SDL_BUTTON(SDL_BUTTON_LEFT)      & btn ? 1 : 0;
+   sdl->mouse_r  = SDL_BUTTON(SDL_BUTTON_RIGHT)     & btn ? 1 : 0;
+   sdl->mouse_m  = SDL_BUTTON(SDL_BUTTON_MIDDLE)    & btn ? 1 : 0;
+   sdl->mouse_wu = SDL_BUTTON(SDL_BUTTON_WHEELUP)   & btn ? 1 : 0;
+   sdl->mouse_wd = SDL_BUTTON(SDL_BUTTON_WHEELDOWN) & btn ? 1 : 0;
 }
 
 static void sdl_input_poll(void *data)
@@ -232,6 +267,20 @@ static void sdl_input_poll(void *data)
    sdl_poll_mouse(sdl);
 }
 
+static uint64_t sdl_get_capabilities(void *data)
+{
+   uint64_t caps = 0;
+
+   caps |= (1 << RETRO_DEVICE_JOYPAD);
+   caps |= (1 << RETRO_DEVICE_MOUSE);
+   caps |= (1 << RETRO_DEVICE_KEYBOARD);
+   caps |= (1 << RETRO_DEVICE_LIGHTGUN);
+   caps |= (1 << RETRO_DEVICE_POINTER);
+   caps |= (1 << RETRO_DEVICE_ANALOG);
+
+   return caps;
+}
+
 const input_driver_t input_sdl = {
    sdl_input_init,
    sdl_input_poll,
@@ -239,6 +288,13 @@ const input_driver_t input_sdl = {
    sdl_bind_button_pressed,
    sdl_input_free,
    NULL,
+   NULL,
+   NULL,
+   sdl_get_capabilities,
+   NULL,
    "sdl",
+   NULL,
+   sdl_set_rumble,
+   sdl_get_joypad_driver,
 };
 

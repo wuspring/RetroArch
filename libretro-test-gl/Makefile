@@ -47,7 +47,7 @@ else ifeq ($(platform), qnx)
 
    CC = qcc -Vgcc_ntoarmv7le
    AR = qcc -Vgcc_ntoarmv7le
-   CFLAGS += -D__BLACKBERRY_QNX__ -DGLES
+   CFLAGS += -DGLES
    GL_LIB := -lGLESv2
 else ifneq (,$(findstring armv,$(platform)))
    CC = gcc
@@ -68,7 +68,6 @@ endif
    CFLAGS += -marm
 ifneq (,$(findstring neon,$(platform)))
    CFLAGS += -mfpu=neon
-   HAVE_NEON = 1
 endif
 ifneq (,$(findstring softfloat,$(platform)))
    CFLAGS += -mfloat-abi=softfp
@@ -101,7 +100,12 @@ CFLAGS += -Wall -pedantic $(fpic)
 
 ifeq ($(GLES), 1)
    CFLAGS += -DGLES -DHAVE_OPENGLES2
-   LIBS += -lGLESv2
+   ifeq ($(GLES31), 1)
+      CFLAGS += -DHAVE_OPENGLES3 -DGLES31 -DGLES3
+   else ifeq ($(GLES3), 1)
+      CFLAGS += -DHAVE_OPENGLES3 -DGLES3
+   endif
+   LIBS += -lGLESv2 # Still link against GLESv2 when using GLES3 API, at least on desktop Linux.
    OBJECTS += ../gfx/glsym/glsym_es2.o
 else
    OBJECTS += ../gfx/glsym/glsym_gl.o
@@ -115,7 +119,7 @@ endif
 all: $(TARGET)
 
 $(TARGET): $(OBJECTS)
-	$(CC) $(fpic) $(SHARED) $(INCLUDES) -o $@ $(OBJECTS) $(LIBS) -lm
+	$(CC) $(fpic) $(SHARED) $(INCLUDES) -o $@ $(OBJECTS) $(LIBS) -lm $(EXTRA_GL_LIBS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<

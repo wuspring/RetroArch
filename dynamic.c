@@ -1,6 +1,6 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
- * 
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
+ *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
  *  ation, either version 3 of the License, or (at your option) any later version.
@@ -17,13 +17,11 @@
 #include "general.h"
 #include "compat/strl.h"
 #include "compat/posix_string.h"
+#include "retroarch_logger.h"
+#include "performance.h"
 #include "file.h"
 #include <string.h>
 #include <ctype.h>
-
-#ifdef RARCH_CONSOLE
-#include "console/rarch_console.h"
-#endif
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -132,7 +130,7 @@ static dylib_t libretro_get_system_info_lib(const char *path, struct retro_syste
    if (!lib)
       return NULL;
 
-   void (*proc)(struct retro_system_info*) = 
+   void (*proc)(struct retro_system_info*) =
       (void (*)(struct retro_system_info*))dylib_proc(lib, "retro_get_system_info");
 
    if (!proc)
@@ -183,57 +181,34 @@ void libretro_free_system_info(struct retro_system_info *info)
    memset(info, 0, sizeof(*info));
 }
 
-static bool find_first_libretro(char *path, size_t size,
-      const char *dir, const char *rom_path)
-{
-   bool ret = false;
-   const char *ext = path_get_extension(rom_path);
-   if (!ext || !*ext)
-   {
-      RARCH_ERR("Path has no extension. Cannot infer libretro implementation.\n");
-      return false;
-   }
-
-   RARCH_LOG("Searching for valid libretro implementation in: \"%s\".\n", dir);
-
-   struct string_list *list = dir_list_new(dir, DYNAMIC_EXT, false);
-   if (!list)
-   {
-      RARCH_ERR("Couldn't open directory: \"%s\".\n", dir);
-      return false;
-   }
-
-   for (size_t i = 0; i < list->size && !ret; i++)
-   {
-      RARCH_LOG("Checking library: \"%s\".\n", list->elems[i].data);
-
-      struct retro_system_info info = {0};
-      dylib_t lib = libretro_get_system_info_lib(list->elems[i].data, &info, NULL);
-      if (!lib)
-         continue;
-
-      if (!info.valid_extensions)
-      {
-         dylib_close(lib);
-         continue;
-      }
-
-      struct string_list *supported_ext = string_split(info.valid_extensions, "|"); 
-
-      if (string_list_find_elem(supported_ext, ext))
-      {
-         strlcpy(path, list->elems[i].data, size);
-         ret = true;
-      }
-
-      string_list_free(supported_ext);
-      dylib_close(lib);
-   }
-
-   dir_list_free(list);
-   return ret;
-}
 #endif
+
+const struct retro_subsystem_info *libretro_find_subsystem_info(const struct retro_subsystem_info *info, unsigned num_info,
+      const char *ident)
+{
+   unsigned i;
+   for (i = 0; i < num_info; i++)
+   {
+      if (!strcmp(info[i].ident, ident))
+         return &info[i];
+      else if (!strcmp(info[i].desc, ident)) // Doesn't hurt
+         return &info[i];
+   }
+
+   return NULL;
+}
+
+const struct retro_controller_description *libretro_find_controller_description(const struct retro_controller_info *info, unsigned id)
+{
+   unsigned i;
+   for (i = 0; i < info->num_types; i++)
+   {
+      if (info->types[i].id == id)
+         return &info->types[i];
+   }
+
+   return NULL;
+}
 
 static void load_symbols(bool is_dummy)
 {
@@ -276,20 +251,7 @@ static void load_symbols(bool is_dummy)
    else
    {
 #ifdef HAVE_DYNAMIC
-      if (path_is_directory(g_settings.libretro))
-      {
-         char libretro_core_buffer[PATH_MAX];
-         if (!find_first_libretro(libretro_core_buffer, sizeof(libretro_core_buffer),
-                  g_settings.libretro, g_extern.fullpath))
-         {
-            RARCH_ERR("libretro_path is a directory, but no valid libretro implementation was found.\n");
-            rarch_fail(1, "load_dynamic()");
-         }
-
-         strlcpy(g_settings.libretro, libretro_core_buffer, sizeof(g_settings.libretro));
-      }
-
-      // Need to use absolute path for this setting. It can be saved to ROM history,
+      // Need to use absolute path for this setting. It can be saved to content history,
       // and a relative path would break in that scenario.
       path_resolve_realpath(g_settings.libretro, sizeof(g_settings.libretro));
 
@@ -340,6 +302,7 @@ static void load_symbols(bool is_dummy)
 
 void libretro_get_current_core_pathname(char *name, size_t size)
 {
+   size_t i;
    if (size == 0)
       return;
 
@@ -355,7 +318,7 @@ void libretro_get_current_core_pathname(char *name, size_t size)
 
    name[strlen(id)] = '\0';
 
-   for (size_t i = 0; id[i] != '\0'; i++)
+   for (i = 0; id[i] != '\0'; i++)
    {
       char c = id[i];
       if (isspace(c) || isblank(c))
@@ -379,7 +342,7 @@ void init_libretro_sym(bool dummy)
       function_t sym = dylib_proc(NULL, "retro_init");
       if (sym)
       {
-         RARCH_ERR("Serious problem. RetroArch wants to load libretro dyamically, but it is already linked.\n"); 
+         RARCH_ERR("Serious problem. RetroArch wants to load libretro dyamically, but it is already linked.\n");
          RARCH_ERR("This could happen if other modules RetroArch depends on link against libretro directly.\n");
          RARCH_ERR("Proceeding could cause a crash. Aborting ...\n");
          rarch_fail(1, "init_libretro_sym()");
@@ -413,7 +376,18 @@ void uninit_libretro_sym(void)
    }
 
    // No longer valid.
+   free(g_extern.system.special);
+   free(g_extern.system.ports);
    memset(&g_extern.system, 0, sizeof(g_extern.system));
+#ifdef HAVE_CAMERA
+   g_extern.camera_active = false;
+#endif
+#ifdef HAVE_LOCATION
+   g_extern.location_active = false;
+#endif
+
+   // Performance counters no longer valid.
+   retro_perf_clear();
 }
 
 #ifdef NEED_DYNAMIC
@@ -440,7 +414,7 @@ function_t dylib_proc(dylib_t lib, const char *proc)
 #else
    void *ptr_sym = NULL;
    if (lib)
-      ptr_sym = dlsym(lib, proc); 
+      ptr_sym = dlsym(lib, proc);
    else
    {
       void *handle = dlopen(NULL, RTLD_LAZY);
@@ -469,8 +443,42 @@ void dylib_close(dylib_t lib)
 }
 #endif
 
+static void rarch_log_libretro(enum retro_log_level level, const char *fmt, ...)
+{
+   if ((unsigned)level < g_settings.libretro_log_level)
+      return;
+
+   va_list vp;
+   va_start(vp, fmt);
+
+   switch (level)
+   {
+      case RETRO_LOG_DEBUG:
+         RARCH_LOG_V("[libretro DEBUG] :: ", fmt, vp);
+         break;
+
+      case RETRO_LOG_INFO:
+         RARCH_LOG_OUTPUT_V("[libretro INFO] :: ", fmt, vp);
+         break;
+
+      case RETRO_LOG_WARN:
+         RARCH_WARN_V("[libretro WARN] :: ", fmt, vp);
+         break;
+
+      case RETRO_LOG_ERROR:
+         RARCH_ERR_V("[libretro ERROR] :: ", fmt, vp);
+         break;
+
+      default:
+         break;
+   }
+
+   va_end(vp);
+}
+
 bool rarch_environment_cb(unsigned cmd, void *data)
 {
+   unsigned p, id;
    switch (cmd)
    {
       case RETRO_ENVIRONMENT_GET_OVERSCAN:
@@ -568,8 +576,13 @@ bool rarch_environment_cb(unsigned cmd, void *data)
          break;
 
       case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
-         *(const char **)data = *g_settings.system_directory ? g_settings.system_directory : NULL;
+         *(const char**)data = *g_settings.system_directory ? g_settings.system_directory : NULL;
          RARCH_LOG("Environ SYSTEM_DIRECTORY: \"%s\".\n", g_settings.system_directory);
+         break;
+
+      case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
+         *(const char**)data = *g_extern.savefile_dir ? g_extern.savefile_dir : NULL;
+         RARCH_LOG("Environ SAVE_DIRECTORY: \"%s\".\n", g_extern.savefile_dir);
          break;
 
       case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
@@ -590,7 +603,7 @@ bool rarch_environment_cb(unsigned cmd, void *data)
             default:
                return false;
          }
-         
+
          g_extern.system.pix_fmt = pix_fmt;
          break;
       }
@@ -622,9 +635,9 @@ bool rarch_environment_cb(unsigned cmd, void *data)
          };
 
          RARCH_LOG("Environ SET_INPUT_DESCRIPTORS:\n");
-         for (unsigned p = 0; p < MAX_PLAYERS; p++)
+         for (p = 0; p < MAX_PLAYERS; p++)
          {
-            for (unsigned id = 0; id < RARCH_FIRST_CUSTOM_BIND; id++)
+            for (id = 0; id < RARCH_FIRST_CUSTOM_BIND; id++)
             {
                const char *desc = g_extern.system.input_desc_btn[p][id];
                if (desc)
@@ -637,7 +650,7 @@ bool rarch_environment_cb(unsigned cmd, void *data)
 
          break;
       }
-      
+
       case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
       {
          RARCH_LOG("Environ SET_KEYBOARD_CALLBACK.\n");
@@ -664,9 +677,19 @@ bool rarch_environment_cb(unsigned cmd, void *data)
 
 #if defined(HAVE_OPENGLES2)
             case RETRO_HW_CONTEXT_OPENGLES2:
-               RARCH_LOG("Requesting OpenGLES2 context.\n");
-               driver.video = &video_gl;
+#if defined(HAVE_OPENGLES3)
+            case RETRO_HW_CONTEXT_OPENGLES3:
+#endif
+               RARCH_LOG("Requesting OpenGLES%u context.\n",
+                     cb->context_type == RETRO_HW_CONTEXT_OPENGLES2 ? 2 : 3);
                break;
+
+#if defined(HAVE_OPENGLES3)
+            case RETRO_HW_CONTEXT_OPENGLES_VERSION:
+               RARCH_LOG("Requesting OpenGLES%u.%u context.\n",
+                     cb->version_major, cb->version_minor);
+               break;
+#endif
 
             case RETRO_HW_CONTEXT_OPENGL:
             case RETRO_HW_CONTEXT_OPENGL_CORE:
@@ -674,17 +697,22 @@ bool rarch_environment_cb(unsigned cmd, void *data)
                return false;
 #elif defined(HAVE_OPENGL)
             case RETRO_HW_CONTEXT_OPENGLES2:
-               RARCH_ERR("Requesting OpenGLES2 context, but RetroArch is compiled against OpenGL. Cannot use HW context.\n");
+            case RETRO_HW_CONTEXT_OPENGLES3:
+               RARCH_ERR("Requesting OpenGLES%u context, but RetroArch is compiled against OpenGL. Cannot use HW context.\n",
+                     cb->context_type == RETRO_HW_CONTEXT_OPENGLES2 ? 2 : 3);
+               return false;
+
+            case RETRO_HW_CONTEXT_OPENGLES_VERSION:
+               RARCH_ERR("Requesting OpenGLES%u.%u context, but RetroArch is compiled against OpenGL. Cannot use HW context.\n",
+                     cb->version_major, cb->version_minor);
                return false;
 
             case RETRO_HW_CONTEXT_OPENGL:
                RARCH_LOG("Requesting OpenGL context.\n");
-               driver.video = &video_gl;
                break;
 
             case RETRO_HW_CONTEXT_OPENGL_CORE:
                RARCH_LOG("Requesting core OpenGL context (%u.%u).\n", cb->version_major, cb->version_minor);
-               driver.video = &video_gl;
                break;
 #endif
 
@@ -716,19 +744,21 @@ bool rarch_environment_cb(unsigned cmd, void *data)
 #ifdef HAVE_DYNAMIC
          *path = g_settings.libretro;
 #else
-         *path = NULL; 
+         *path = NULL;
 #endif
          break;
       }
 
-#ifdef HAVE_THREADS
+      //FIXME - PS3 audio driver needs to be fixed so that threaded audio works correctly
+      //(audio is already on a thread for PS3 audio driver so that's probably the problem)
+#if defined(HAVE_THREADS) && !defined(__CELLOS_LV2__)
       case RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK:
       {
          RARCH_LOG("Environ SET_AUDIO_CALLBACK.\n");
          const struct retro_audio_callback *info = (const struct retro_audio_callback*)data;
 
-#ifdef HAVE_FFMPEG
-         if (g_extern.recording) // A/V sync is a must.
+#ifdef HAVE_RECORD
+         if (g_extern.rec) // A/V sync is a must.
             return false;
 #endif
 
@@ -737,7 +767,7 @@ bool rarch_environment_cb(unsigned cmd, void *data)
             return false;
 #endif
 
-         g_extern.system.audio_callback = info->callback;
+         g_extern.system.audio_callback = *info;
          break;
       }
 #endif
@@ -756,6 +786,174 @@ bool rarch_environment_cb(unsigned cmd, void *data)
          break;
       }
 
+      case RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE:
+      {
+         RARCH_LOG("Environ GET_RUMBLE_INTERFACE.\n");
+         struct retro_rumble_interface *iface = (struct retro_rumble_interface*)data;
+         iface->set_rumble_state = driver_set_rumble_state;
+         break;
+      }
+
+      case RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES:
+      {
+         RARCH_LOG("Environ GET_INPUT_DEVICE_CAPABILITIES.\n");
+         uint64_t *mask = (uint64_t*)data;
+         if (driver.input && driver.input->get_capabilities && driver.input_data)
+            *mask = driver.input->get_capabilities(driver.input_data);
+         else
+            return false;
+         break;
+      }
+
+      case RETRO_ENVIRONMENT_GET_SENSOR_INTERFACE:
+      {
+         RARCH_LOG("Environ GET_SENSOR_INTERFACE.\n");
+         struct retro_sensor_interface *iface = (struct retro_sensor_interface*)data;
+         iface->set_sensor_state = driver_set_sensor_state;
+         iface->get_sensor_input = driver_sensor_get_input;
+         break;
+      }
+
+#ifdef HAVE_CAMERA
+      case RETRO_ENVIRONMENT_GET_CAMERA_INTERFACE:
+      {
+         RARCH_LOG("Environ GET_CAMERA_INTERFACE.\n");
+         struct retro_camera_callback *cb = (struct retro_camera_callback*)data;
+         cb->start = driver_camera_start;
+         cb->stop = driver_camera_stop;
+         g_extern.system.camera_callback = *cb;
+         g_extern.camera_active = cb->caps != 0;
+         break;
+      }
+#endif
+#ifdef HAVE_LOCATION
+      case RETRO_ENVIRONMENT_GET_LOCATION_INTERFACE:
+      {
+         RARCH_LOG("Environ GET_LOCATION_INTERFACE.\n");
+         struct retro_location_callback *cb = (struct retro_location_callback*)data;
+         cb->start = driver_location_start;
+         cb->stop = driver_location_stop;
+         cb->get_position = driver_location_get_position;
+         cb->set_interval = driver_location_set_interval;
+         g_extern.system.location_callback = *cb;
+         g_extern.location_active = true;
+         break;
+      }
+#endif
+
+      case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
+      {
+         RARCH_LOG("Environ GET_LOG_INTERFACE.\n");
+         struct retro_log_callback *cb = (struct retro_log_callback*)data;
+         cb->log = rarch_log_libretro;
+         break;
+      }
+
+      case RETRO_ENVIRONMENT_GET_PERF_INTERFACE:
+      {
+         RARCH_LOG("Environ GET_PERF_INTERFACE.\n");
+         struct retro_perf_callback *cb = (struct retro_perf_callback*)data;
+         cb->get_time_usec    = rarch_get_time_usec;
+         cb->get_cpu_features = rarch_get_cpu_features;
+         cb->get_perf_counter = rarch_get_perf_counter;
+         cb->perf_register    = retro_perf_register; // libretro specific path.
+         cb->perf_start       = rarch_perf_start;
+         cb->perf_stop        = rarch_perf_stop;
+         cb->perf_log         = retro_perf_log; // libretro specific path.
+         break;
+      }
+
+      case RETRO_ENVIRONMENT_GET_CONTENT_DIRECTORY:
+      {
+         const char **dir = (const char**)data;
+         *dir = *g_settings.content_directory ? g_settings.content_directory : NULL;
+         RARCH_LOG("Environ CONTENT_DIRECTORY: \"%s\".\n", g_settings.content_directory);
+         break;
+      }
+
+      case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+      {
+         RARCH_LOG("Environ SET_SYSTEM_AV_INFO.\n");
+         return driver_update_system_av_info((const struct retro_system_av_info*)data);
+      }
+
+      case RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO:
+      {
+         RARCH_LOG("Environ SET_SUBSYSTEM_INFO.\n");
+         unsigned i, j;
+         const struct retro_subsystem_info *info = (const struct retro_subsystem_info*)data;
+         for (i = 0; info[i].ident; i++)
+         {
+            RARCH_LOG("Special game type: %s\n", info[i].desc);
+            RARCH_LOG("  Ident: %s\n", info[i].ident);
+            RARCH_LOG("  ID: %u\n", info[i].id);
+            RARCH_LOG("  ROMs:\n");
+            for (j = 0; j < info[i].num_roms; j++)
+            {
+               RARCH_LOG("    %s (%s)\n",
+                     info[i].roms[j].desc, info[i].roms[j].required ? "required" : "optional");
+            }
+         }
+
+         free(g_extern.system.special);
+         g_extern.system.special = (struct retro_subsystem_info*)calloc(i, sizeof(*g_extern.system.special));
+         if (!g_extern.system.special)
+            return false;
+
+         memcpy(g_extern.system.special, info, i * sizeof(*g_extern.system.special));
+         g_extern.system.num_special = i;
+         break;
+      }
+
+      case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
+      {
+         RARCH_LOG("Environ SET_CONTROLLER_INFO.\n");
+         unsigned i, j;
+         const struct retro_controller_info *info = (const struct retro_controller_info*)data;
+         for (i = 0; info[i].types; i++)
+         {
+            RARCH_LOG("Controller port: %u\n", i + 1);
+            for (j = 0; j < info[i].num_types; j++)
+               RARCH_LOG("   %s (ID: %u)\n", info[i].types[j].desc, info[i].types[j].id);
+         }
+
+         free(g_extern.system.ports);
+         g_extern.system.ports = (struct retro_controller_info*)calloc(i, sizeof(*g_extern.system.ports));
+         if (!g_extern.system.ports)
+            return false;
+
+         memcpy(g_extern.system.ports, info, i * sizeof(*g_extern.system.ports));
+         g_extern.system.num_ports = i;
+         break;
+      }
+
+      case RETRO_ENVIRONMENT_SET_GEOMETRY:
+      {
+         RARCH_LOG("Environ SET_GEOMETRY.\n");
+         const struct retro_game_geometry *in_geom = (const struct retro_game_geometry*)data;
+         struct retro_game_geometry *geom = &g_extern.system.av_info.geometry;
+
+         // Can potentially be called every frame, don't do anything unless required.
+         if (geom->base_width != in_geom->base_width ||
+               geom->base_height != in_geom->base_height ||
+               geom->aspect_ratio != in_geom->aspect_ratio)
+         {
+            geom->base_width   = in_geom->base_width;
+            geom->base_height  = in_geom->base_height;
+            geom->aspect_ratio = in_geom->aspect_ratio;
+            RARCH_LOG("SET_GEOMETRY: %ux%u, aspect: %.3f.\n",
+                  geom->base_width, geom->base_height, geom->aspect_ratio);
+
+            // Forces recomputation of aspect ratios if using core-dependent aspect ratios.
+            if (driver.video_poke && driver.video_poke->set_aspect_ratio && driver.video_data)
+               driver.video_poke->set_aspect_ratio(driver.video_data, g_settings.video.aspect_ratio_idx);
+            
+            // TODO: Figure out what to do, if anything, with recording.
+         }
+         break;
+      }
+
+      // Private extensions for internal use, not part of libretro API.
       case RETRO_ENVIRONMENT_SET_LIBRETRO_PATH:
          RARCH_LOG("Environ (Private) SET_LIBRETRO_PATH.\n");
 
@@ -773,12 +971,12 @@ bool rarch_environment_cb(unsigned cmd, void *data)
          else
             *g_extern.fullpath = '\0';
 
-#if !defined( HAVE_DYNAMIC) && defined(RARCH_CONSOLE)
-         g_extern.lifecycle_mode_state &= ~(1ULL << MODE_GAME);
-         g_extern.lifecycle_mode_state |= (1ULL << MODE_EXITSPAWN);
-         g_extern.lifecycle_mode_state |= (1ULL << MODE_EXITSPAWN_START_GAME);
+#if defined(RARCH_CONSOLE)
+         g_extern.lifecycle_state &= ~(1ULL << MODE_GAME);
+         g_extern.lifecycle_state |= (1ULL << MODE_EXITSPAWN);
+         g_extern.lifecycle_state |= (1ULL << MODE_EXITSPAWN_START_GAME);
 #elif defined(HAVE_DYNAMIC)
-         g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_GAME);
+         g_extern.lifecycle_state |= (1ULL << MODE_LOAD_GAME);
 #endif
 
          if (cmd == RETRO_ENVIRONMENT_EXEC_ESCAPE)

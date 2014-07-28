@@ -1,6 +1,7 @@
 /* RetroArch - A frontend for libretro.
- * Copyright (C) 2010-2013 - Hans-Kristian Arntzen
- * Copyright (C) 2011-2013 - Daniel De Matteis
+ * Copyright (C) 2010-2014 - Hans-Kristian Arntzen
+ * Copyright (C) 2011-2014 - Daniel De Matteis
+ * Copyright (C) 2012-2014 - Jason Fetters
  *
  * RetroArch is free software: you can redistribute it and/or modify it under the terms
  * of the GNU General Public License as published by the Free Software Found-
@@ -13,70 +14,68 @@
  * If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <dispatch/dispatch.h>
-#include <pthread.h>
-#include "../../apple/common/rarch_wrapper.h"
+#include "../menu/menu_common.h"
+#include "../../settings_data.h"
 
-#include "../frontend_context.h"
+#include "../frontend.h"
 
 #include <stdint.h>
 #include "../../boolean.h"
 #include <stddef.h>
 #include <string.h>
 
-static pthread_mutex_t apple_event_queue_lock = PTHREAD_MUTEX_INITIALIZER;
+static CFRunLoopObserverRef iterate_observer;
 
-static struct
+static void do_iteration(void)
 {
-   void (*function)(void*);
-   void* userdata;
-} apple_event_queue[16];
+   if (!(g_extern.main_is_init && !g_extern.is_paused))
+      return;
 
-static uint32_t apple_event_queue_size;
-
-void apple_frontend_post_event(void (*fn)(void*), void* userdata)
-{
-   pthread_mutex_lock(&apple_event_queue_lock);
-
-   if (apple_event_queue_size < 16)
+   if (main_entry_iterate(0, NULL, NULL))
    {
-      apple_event_queue[apple_event_queue_size].function = fn;
-      apple_event_queue[apple_event_queue_size].userdata = userdata;
-      apple_event_queue_size ++;
+      main_exit(NULL);
+      return;
    }
 
-   pthread_mutex_unlock(&apple_event_queue_lock);
+   CFRunLoopWakeUp(CFRunLoopGetMain());
 }
 
-static void process_events(void)
+void apple_start_iteration(void)
 {
-   pthread_mutex_lock(&apple_event_queue_lock);
-
-   for (int i = 0; i < apple_event_queue_size; i ++)
-      apple_event_queue[i].function(apple_event_queue[i].userdata);
-
-   apple_event_queue_size = 0;
-
-   pthread_mutex_unlock(&apple_event_queue_lock);
+    iterate_observer = CFRunLoopObserverCreate(0, kCFRunLoopBeforeWaiting, true, 0, (CFRunLoopObserverCallBack)do_iteration, 0);
+    CFRunLoopAddObserver(CFRunLoopGetMain(), iterate_observer, kCFRunLoopCommonModes);
 }
 
-static void system_shutdown(bool force)
+void apple_stop_iteration(void)
 {
-   /* force set to true makes it display the 'Failed to load game' message. */
-   if (force)
-      dispatch_async_f(dispatch_get_main_queue(), (void*)1, apple_rarch_exited);
-   else
-      dispatch_async_f(dispatch_get_main_queue(), 0, apple_rarch_exited);
+    CFRunLoopObserverInvalidate(iterate_observer);
+    CFRelease(iterate_observer);
+    iterate_observer = 0;
 }
 
+extern void apple_rarch_exited(void);
+
+static void frontend_apple_shutdown(bool unused)
+{
+    apple_rarch_exited();
+}
+
+static int frontend_apple_get_rating(void)
+{
+   /* TODO/FIXME - look at unique identifier per device and 
+    * determine rating for some */
+   return -1;
+}
 const frontend_ctx_driver_t frontend_ctx_apple = {
    NULL,                         /* environment_get */
    NULL,                         /* init */
    NULL,                         /* deinit */
    NULL,                         /* exitspawn */
    NULL,                         /* process_args */
-   process_events,               /* process_events */
+   NULL,                         /* process_events */
    NULL,                         /* exec */
-   system_shutdown,              /* shutdown */
+   frontend_apple_shutdown,      /* shutdown */
+   NULL,                         /* get_name */
+   frontend_apple_get_rating,    /* get_rating */
    "apple",
 };

@@ -1,6 +1,6 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
- *  Copyright (C) 2011-2013 - Chris Moeller
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
+ *  Copyright (C) 2011-2014 - Chris Moeller
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -15,15 +15,17 @@
  */
 
 
-#include "driver.h"
-#include "general.h"
-#include "fifo_buffer.h"
+#include "../driver.h"
+#include "../general.h"
+#include "../fifo_buffer.h"
 #include <stdlib.h>
 #include "../boolean.h"
 #include <pthread.h>
 
 #ifdef OSX
 #include <CoreAudio/CoreAudio.h>
+#else
+#include <AudioToolbox/AudioToolbox.h>
 #endif
 
 #include <CoreAudio/CoreAudioTypes.h>
@@ -35,13 +37,19 @@ typedef struct coreaudio
    pthread_mutex_t lock;
    pthread_cond_t cond;
 
+#ifdef OSX_PPC
+   ComponentInstance dev;
+#else
    AudioComponentInstance dev;
+#endif
    bool dev_alive;
 
    fifo_buffer_t *buffer;
    bool nonblock;
    size_t buffer_size;
 } coreaudio_t;
+
+static bool g_interrupted;
 
 static void coreaudio_free(void *data)
 {
@@ -52,7 +60,11 @@ static void coreaudio_free(void *data)
    if (dev->dev_alive)
    {
       AudioOutputUnitStop(dev->dev);
+#ifdef OSX_PPC
+      CloseComponent(dev->dev);
+#else
       AudioComponentInstanceDispose(dev->dev);
+#endif
    }
 
    if (dev->buffer)
@@ -139,6 +151,14 @@ done:
 }
 #endif
 
+#ifdef IOS
+static void coreaudio_interrupt_listener(void *data, UInt32 interrupt_state)
+{
+   (void)data;
+   g_interrupted = (interrupt_state == kAudioSessionBeginInterruption);
+}
+#endif
+
 static void *coreaudio_init(const char *device, unsigned rate, unsigned latency)
 {
    (void)device;
@@ -150,8 +170,22 @@ static void *coreaudio_init(const char *device, unsigned rate, unsigned latency)
    pthread_mutex_init(&dev->lock, NULL);
    pthread_cond_init(&dev->cond, NULL);
 
+#ifdef IOS
+   static bool session_initialized = false;
+   if (!session_initialized)
+   {
+      session_initialized = true;
+      AudioSessionInitialize(0, 0, coreaudio_interrupt_listener, 0);
+      AudioSessionSetActive(true);
+   }
+#endif
+
    // Create AudioComponent
+#ifdef OSX_PPC
+   ComponentDescription desc = {0};
+#else
    AudioComponentDescription desc = {0};
+#endif
    desc.componentType = kAudioUnitType_Output;
 #ifdef IOS
    desc.componentSubType = kAudioUnitSubType_RemoteIO;
@@ -160,11 +194,19 @@ static void *coreaudio_init(const char *device, unsigned rate, unsigned latency)
 #endif
    desc.componentManufacturer = kAudioUnitManufacturer_Apple;
 
+#ifdef OSX_PPC
+   Component comp = FindNextComponent(NULL, &desc);
+#else
    AudioComponent comp = AudioComponentFindNext(NULL, &desc);
+#endif
    if (comp == NULL)
       goto error;
    
+#ifdef OSX_PPC
+   if (OpenAComponent(comp, &dev->dev) != noErr)
+#else
    if (AudioComponentInstanceNew(comp, &dev->dev) != noErr)
+#endif
       goto error;
 
 #ifdef OSX
@@ -261,7 +303,17 @@ static ssize_t coreaudio_write(void *data, const void *buf_, size_t size)
    const uint8_t *buf = (const uint8_t*)buf_;
    size_t written = 0;
 
-   while (size > 0)
+#ifdef IOS
+   struct timeval time;
+   gettimeofday(&time, 0);
+   
+   struct timespec timeout;
+   memset(&timeout, 0, sizeof(timeout));
+   timeout.tv_sec = time.tv_sec + 3;
+   timeout.tv_nsec = time.tv_usec * 1000;
+#endif
+
+   while (!g_interrupted && size > 0)
    {
       pthread_mutex_lock(&dev->lock);
 
@@ -280,8 +332,13 @@ static ssize_t coreaudio_write(void *data, const void *buf_, size_t size)
          break;
       }
 
+#ifdef IOS
+      if (write_avail == 0 && pthread_cond_timedwait(&dev->cond, &dev->lock, &timeout) == ETIMEDOUT)
+         g_interrupted = true;
+#else
       if (write_avail == 0)
          pthread_cond_wait(&dev->cond, &dev->lock);
+#endif
       pthread_mutex_unlock(&dev->lock);
    }
 

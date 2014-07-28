@@ -1,6 +1,6 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
- * 
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
+ *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
  *  ation, either version 3 of the License, or (at your option) any later version.
@@ -16,6 +16,7 @@
 #include "input_common.h"
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 #include "../general.h"
 #include "../driver.h"
@@ -37,21 +38,50 @@
 #include <X11/keysym.h>
 #endif
 
+#ifdef __linux
+#include <linux/input.h>
+#include <linux/kd.h>
+#endif
+
 #include "../file.h"
 
 static const rarch_joypad_driver_t *joypad_drivers[] = {
 #ifndef IS_RETROLAUNCH
+#ifdef __CELLOS_LV2__
+   &ps3_joypad,
+#endif
 #ifdef HAVE_WINXINPUT
    &winxinput_joypad,
+#endif
+#ifdef GEKKO
+   &gx_joypad,
+#endif
+#ifdef _XBOX
+   &xdk_joypad,
+#endif
+#ifdef PSP
+   &psp_joypad,
 #endif
 #ifdef HAVE_DINPUT
    &dinput_joypad,
 #endif
+#ifdef HAVE_UDEV
+   &udev_joypad,
+#endif
 #if defined(__linux) && !defined(ANDROID)
    &linuxraw_joypad,
 #endif
+#ifdef ANDROID
+   &android_joypad,
+#endif
 #ifdef HAVE_SDL
    &sdl_joypad,
+#endif
+#ifdef __MACH__
+   &apple_joypad,
+#endif
+#ifdef __QNX__
+   &qnx_joypad,
 #endif
 #endif
    NULL,
@@ -59,10 +89,11 @@ static const rarch_joypad_driver_t *joypad_drivers[] = {
 
 const rarch_joypad_driver_t *input_joypad_init_driver(const char *ident)
 {
+   unsigned i;
    if (!ident || !*ident)
       return input_joypad_init_first();
 
-   for (unsigned i = 0; joypad_drivers[i]; i++)
+   for (i = 0; joypad_drivers[i]; i++)
    {
       if (strcmp(ident, joypad_drivers[i]->ident) == 0 && joypad_drivers[i]->init())
       {
@@ -76,7 +107,8 @@ const rarch_joypad_driver_t *input_joypad_init_driver(const char *ident)
 
 const rarch_joypad_driver_t *input_joypad_init_first(void)
 {
-   for (unsigned i = 0; joypad_drivers[i]; i++)
+   unsigned i;
+   for (i = 0; joypad_drivers[i]; i++)
    {
       if (joypad_drivers[i]->init())
       {
@@ -100,6 +132,19 @@ const char *input_joypad_name(const rarch_joypad_driver_t *driver, unsigned joyp
       return NULL;
 
    return driver->name(joypad);
+}
+
+bool input_joypad_set_rumble(const rarch_joypad_driver_t *driver,
+      unsigned port, enum retro_rumble_effect effect, uint16_t strength)
+{
+   if (!driver || !driver->set_rumble)
+      return false;
+
+   int joy_index = g_settings.input.joypad_map[port];
+   if (joy_index < 0 || joy_index >= MAX_PLAYERS)
+      return false;
+
+   return driver->set_rumble(joy_index, effect, strength);
 }
 
 bool input_joypad_pressed(const rarch_joypad_driver_t *driver,
@@ -450,7 +495,7 @@ const struct rarch_key_map rarch_key_map_dinput[] = {
    { DIK_NUMPADPLUS, RETROK_KP_PLUS },
    { DIK_NUMPADMINUS, RETROK_KP_MINUS },
    { DIK_NUMPADSTAR, RETROK_KP_MULTIPLY },
-   { DIK_NUMPADSLASH, RETROK_KP_DIVIDE },
+   { DIK_DIVIDE, RETROK_KP_DIVIDE },
    { DIK_GRAVE, RETROK_BACKQUOTE },
    { DIK_PAUSE, RETROK_PAUSE },
    { DIK_NUMPAD0, RETROK_KP0 },
@@ -511,6 +556,239 @@ const struct rarch_key_map rarch_key_map_dinput[] = {
    { DIK_X, RETROK_x },
    { DIK_Y, RETROK_y },
    { DIK_Z, RETROK_z },
+   { DIK_APOSTROPHE, RETROK_QUOTE },
+   { DIK_COMMA, RETROK_COMMA },
+   { DIK_MINUS, RETROK_MINUS },
+   { DIK_SLASH, RETROK_SLASH },
+   { DIK_SEMICOLON, RETROK_SEMICOLON },
+   { DIK_EQUALS, RETROK_EQUALS },
+   { DIK_LBRACKET, RETROK_LEFTBRACKET },
+   { DIK_BACKSLASH, RETROK_BACKSLASH },
+   { DIK_RBRACKET, RETROK_RIGHTBRACKET },
+   { DIK_DECIMAL, RETROK_KP_PERIOD },
+   { DIK_RCONTROL, RETROK_RCTRL },
+   { DIK_RMENU, RETROK_RALT },
+   { DIK_PERIOD, RETROK_PERIOD },
+   { DIK_SCROLL, RETROK_SCROLLOCK },
+   { DIK_CAPSLOCK, RETROK_CAPSLOCK },
+   { DIK_NUMLOCK, RETROK_NUMLOCK },
+   { 0, RETROK_UNKNOWN },
+};
+#endif
+
+#ifdef EMSCRIPTEN
+const struct rarch_key_map rarch_key_map_rwebinput[] = {
+   { 37, RETROK_LEFT },
+   { 39, RETROK_RIGHT },
+   { 38, RETROK_UP },
+   { 40, RETROK_DOWN },
+   { 13, RETROK_RETURN },
+   { 9, RETROK_TAB },
+   { 45, RETROK_INSERT },
+   { 46, RETROK_DELETE },
+   { 16, RETROK_RSHIFT },
+   { 16, RETROK_LSHIFT },
+   { 17, RETROK_LCTRL },
+   { 35, RETROK_END },
+   { 36, RETROK_HOME },
+   { 34, RETROK_PAGEDOWN },
+   { 33, RETROK_PAGEUP },
+   { 18, RETROK_LALT },
+   { 32, RETROK_SPACE },
+   { 27, RETROK_ESCAPE },
+   { 8, RETROK_BACKSPACE },
+   { 13, RETROK_KP_ENTER },
+   { 107, RETROK_KP_PLUS },
+   { 109, RETROK_KP_MINUS },
+   { 106, RETROK_KP_MULTIPLY },
+   { 111, RETROK_KP_DIVIDE },
+   { 192, RETROK_BACKQUOTE },
+   { 19, RETROK_PAUSE },
+   { 96, RETROK_KP0 },
+   { 97, RETROK_KP1 },
+   { 98, RETROK_KP2 },
+   { 99, RETROK_KP3 },
+   { 100, RETROK_KP4 },
+   { 101, RETROK_KP5 },
+   { 102, RETROK_KP6 },
+   { 103, RETROK_KP7 },
+   { 104, RETROK_KP8 },
+   { 105, RETROK_KP9 },
+   { 48, RETROK_0 },
+   { 49, RETROK_1 },
+   { 50, RETROK_2 },
+   { 51, RETROK_3 },
+   { 52, RETROK_4 },
+   { 53, RETROK_5 },
+   { 54, RETROK_6 },
+   { 55, RETROK_7 },
+   { 56, RETROK_8 },
+   { 57, RETROK_9 },
+   { 112, RETROK_F1 },
+   { 113, RETROK_F2 },
+   { 114, RETROK_F3 },
+   { 115, RETROK_F4 },
+   { 116, RETROK_F5 },
+   { 117, RETROK_F6 },
+   { 118, RETROK_F7 },
+   { 119, RETROK_F8 },
+   { 120, RETROK_F9 },
+   { 121, RETROK_F10 },
+   { 122, RETROK_F11 },
+   { 123, RETROK_F12 },
+   { 65, RETROK_a },
+   { 66, RETROK_b },
+   { 67, RETROK_c },
+   { 68, RETROK_d },
+   { 69, RETROK_e },
+   { 70, RETROK_f },
+   { 71, RETROK_g },
+   { 72, RETROK_h },
+   { 73, RETROK_i },
+   { 74, RETROK_j },
+   { 75, RETROK_k },
+   { 76, RETROK_l },
+   { 77, RETROK_m },
+   { 78, RETROK_n },
+   { 79, RETROK_o },
+   { 80, RETROK_p },
+   { 81, RETROK_q },
+   { 82, RETROK_r },
+   { 83, RETROK_s },
+   { 84, RETROK_t },
+   { 85, RETROK_u },
+   { 86, RETROK_v },
+   { 87, RETROK_w },
+   { 88, RETROK_x },
+   { 89, RETROK_y },
+   { 90, RETROK_z },
+   { 222, RETROK_QUOTE },
+   { 188, RETROK_COMMA },
+   { 173, RETROK_MINUS },
+   { 191, RETROK_SLASH },
+   { 59, RETROK_SEMICOLON },
+   { 61, RETROK_EQUALS },
+   { 219, RETROK_LEFTBRACKET },
+   { 220, RETROK_BACKSLASH },
+   { 221, RETROK_RIGHTBRACKET },
+   { 188, RETROK_KP_PERIOD },
+   { 17, RETROK_RCTRL },
+   { 18, RETROK_RALT },
+   { 190, RETROK_PERIOD },
+   { 145, RETROK_SCROLLOCK },
+   { 20, RETROK_CAPSLOCK },
+   { 144, RETROK_NUMLOCK },
+   { 0, RETROK_UNKNOWN },
+};
+#endif
+
+#ifdef __linux
+const struct rarch_key_map rarch_key_map_linux[] = {
+   { KEY_ESC, RETROK_ESCAPE },
+   { KEY_1, RETROK_1 },
+   { KEY_2, RETROK_2 },
+   { KEY_3, RETROK_3},
+   { KEY_4, RETROK_4 },
+   { KEY_5, RETROK_5 },
+   { KEY_6, RETROK_6 },
+   { KEY_7, RETROK_7 },
+   { KEY_8, RETROK_8 },
+   { KEY_9, RETROK_9 },
+   { KEY_0, RETROK_0 },
+   { KEY_MINUS, RETROK_MINUS },
+   { KEY_EQUAL, RETROK_EQUALS },
+   { KEY_BACKSPACE, RETROK_BACKSPACE },
+   { KEY_TAB, RETROK_TAB },
+   { KEY_Q, RETROK_q },
+   { KEY_W, RETROK_w },
+   { KEY_E, RETROK_e },
+   { KEY_R, RETROK_r },
+   { KEY_T, RETROK_t },
+   { KEY_Y, RETROK_y },
+   { KEY_U, RETROK_u },
+   { KEY_I, RETROK_i },
+   { KEY_O, RETROK_o },
+   { KEY_P, RETROK_p },
+   { KEY_LEFTBRACE, RETROK_LEFTBRACKET },
+   { KEY_RIGHTBRACE, RETROK_RIGHTBRACKET },
+   { KEY_ENTER, RETROK_RETURN },
+   { KEY_LEFTCTRL, RETROK_LCTRL },
+   { KEY_A, RETROK_a },
+   { KEY_S, RETROK_s },
+   { KEY_D, RETROK_d },
+   { KEY_F, RETROK_f },
+   { KEY_G, RETROK_g },
+   { KEY_H, RETROK_h },
+   { KEY_J, RETROK_j },
+   { KEY_K, RETROK_k },
+   { KEY_L, RETROK_l },
+   { KEY_SEMICOLON, RETROK_SEMICOLON },
+   { KEY_APOSTROPHE, RETROK_QUOTE },
+   { KEY_GRAVE, RETROK_BACKQUOTE },
+   { KEY_LEFTSHIFT, RETROK_LSHIFT },
+   { KEY_BACKSLASH, RETROK_BACKSLASH },
+   { KEY_Z, RETROK_z },
+   { KEY_X, RETROK_x },
+   { KEY_C, RETROK_c },
+   { KEY_V, RETROK_v },
+   { KEY_B, RETROK_b },
+   { KEY_N, RETROK_n },
+   { KEY_M, RETROK_m },
+   { KEY_COMMA, RETROK_COMMA },
+   { KEY_DOT, RETROK_PERIOD },
+   { KEY_SLASH, RETROK_SLASH },
+   { KEY_RIGHTSHIFT, RETROK_RSHIFT },
+   { KEY_KPASTERISK, RETROK_KP_MULTIPLY },
+   { KEY_LEFTALT, RETROK_LALT },
+   { KEY_SPACE, RETROK_SPACE },
+   { KEY_CAPSLOCK, RETROK_CAPSLOCK },
+   { KEY_F1, RETROK_F1 },
+   { KEY_F2, RETROK_F2 },
+   { KEY_F3, RETROK_F3 },
+   { KEY_F4, RETROK_F4 },
+   { KEY_F5, RETROK_F5 },
+   { KEY_F6, RETROK_F6 },
+   { KEY_F7, RETROK_F7 },
+   { KEY_F8, RETROK_F8 },
+   { KEY_F9, RETROK_F9 },
+   { KEY_F10, RETROK_F10 },
+   { KEY_NUMLOCK, RETROK_NUMLOCK },
+   { KEY_SCROLLLOCK, RETROK_SCROLLOCK },
+   { KEY_KP7, RETROK_KP7 },
+   { KEY_KP8, RETROK_KP8 },
+   { KEY_KP9, RETROK_KP9 },
+   { KEY_KPMINUS, RETROK_KP_MINUS },
+   { KEY_KP4, RETROK_KP4 },
+   { KEY_KP5, RETROK_KP5 },
+   { KEY_KP6, RETROK_KP6 },
+   { KEY_KPPLUS, RETROK_KP_PLUS },
+   { KEY_KP1, RETROK_KP1 },
+   { KEY_KP2, RETROK_KP2 },
+   { KEY_KP3, RETROK_KP3 },
+   { KEY_KP0, RETROK_KP0 },
+   { KEY_KPDOT, RETROK_KP_PERIOD },
+
+   { KEY_F11, RETROK_F11 },
+   { KEY_F12, RETROK_F12 },
+
+   { KEY_KPENTER, RETROK_KP_ENTER },
+   { KEY_RIGHTCTRL, RETROK_RCTRL },
+   { KEY_KPSLASH, RETROK_KP_DIVIDE },
+   { KEY_SYSRQ, RETROK_PRINT },
+   { KEY_RIGHTALT, RETROK_RALT },
+
+   { KEY_HOME, RETROK_HOME },
+   { KEY_UP, RETROK_UP },
+   { KEY_PAGEUP, RETROK_PAGEUP },
+   { KEY_LEFT, RETROK_LEFT },
+   { KEY_RIGHT, RETROK_RIGHT },
+   { KEY_END, RETROK_END },
+   { KEY_DOWN, RETROK_DOWN },
+   { KEY_PAGEDOWN, RETROK_PAGEDOWN },
+   { KEY_INSERT, RETROK_INSERT },
+   { KEY_DELETE, RETROK_DELETE },
+
+   { KEY_PAUSE, RETROK_PAUSE },
    { 0, RETROK_UNKNOWN },
 };
 #endif
@@ -526,13 +804,38 @@ void input_init_keyboard_lut(const struct rarch_key_map *map)
 
 enum retro_key input_translate_keysym_to_rk(unsigned sym)
 {
-   for (unsigned i = 0; i < ARRAY_SIZE(rarch_keysym_lut); i++)
+   unsigned i;
+   for (i = 0; i < ARRAY_SIZE(rarch_keysym_lut); i++)
    {
       if (rarch_keysym_lut[i] == sym)
          return (enum retro_key)i;
    }
 
    return RETROK_UNKNOWN;
+}
+
+void input_translate_rk_to_str(enum retro_key key, char *buf, size_t size)
+{
+   rarch_assert(size >= 2);
+   *buf = '\0';
+
+   if (key >= RETROK_a && key <= RETROK_z)
+   {
+      buf[0] = (key - RETROK_a) + 'a';
+      buf[1] = '\0';
+   }
+   else
+   {
+      unsigned i;
+      for (i = 0; input_config_key_map[i].str; i++)
+      {
+         if (input_config_key_map[i].key == key)
+         {
+            strlcpy(buf, input_config_key_map[i].str, size);
+            break;
+         }
+      }
+   }
 }
 
 unsigned input_translate_rk_to_keysym(enum retro_key key)
@@ -565,13 +868,12 @@ const struct input_bind_map input_config_bind_map[RARCH_BIND_LIST_END_NULL] = {
       DECLARE_BIND(right,     RETRO_DEVICE_ID_JOYPAD_RIGHT, "Right D-pad"),
       DECLARE_BIND(a,         RETRO_DEVICE_ID_JOYPAD_A, "A button (right)"),
       DECLARE_BIND(x,         RETRO_DEVICE_ID_JOYPAD_X, "X button (top)"),
-      DECLARE_BIND(l,         RETRO_DEVICE_ID_JOYPAD_L, "L button (left shoulder)"),
-      DECLARE_BIND(r,         RETRO_DEVICE_ID_JOYPAD_R, "R button (right shoulder)"),
-      DECLARE_BIND(l2,        RETRO_DEVICE_ID_JOYPAD_L2, "L2 button (left shoulder #2)"),
-      DECLARE_BIND(r2,        RETRO_DEVICE_ID_JOYPAD_R2, "R2 button (right shoulder #2)"),
-      DECLARE_BIND(l3,        RETRO_DEVICE_ID_JOYPAD_L3, "L3 button (left analog button)"),
-      DECLARE_BIND(r3,        RETRO_DEVICE_ID_JOYPAD_R3, "R3 button (right analog button)"),
-      DECLARE_BIND(turbo,     RARCH_TURBO_ENABLE, "Turbo enable"),
+      DECLARE_BIND(l,         RETRO_DEVICE_ID_JOYPAD_L, "L button (shoulder)"),
+      DECLARE_BIND(r,         RETRO_DEVICE_ID_JOYPAD_R, "R button (shoulder)"),
+      DECLARE_BIND(l2,        RETRO_DEVICE_ID_JOYPAD_L2, "L2 button (trigger)"),
+      DECLARE_BIND(r2,        RETRO_DEVICE_ID_JOYPAD_R2, "R2 button (trigger)"),
+      DECLARE_BIND(l3,        RETRO_DEVICE_ID_JOYPAD_L3, "L3 button (thumb)"),
+      DECLARE_BIND(r3,        RETRO_DEVICE_ID_JOYPAD_R3, "R3 button (thumb)"),
       DECLARE_BIND(l_x_plus,  RARCH_ANALOG_LEFT_X_PLUS, "Left analog X+ (right)"),
       DECLARE_BIND(l_x_minus, RARCH_ANALOG_LEFT_X_MINUS, "Left analog X- (left)"),
       DECLARE_BIND(l_y_plus,  RARCH_ANALOG_LEFT_Y_PLUS, "Left analog Y+ (down)"),
@@ -580,6 +882,8 @@ const struct input_bind_map input_config_bind_map[RARCH_BIND_LIST_END_NULL] = {
       DECLARE_BIND(r_x_minus, RARCH_ANALOG_RIGHT_X_MINUS, "Right analog X- (left)"),
       DECLARE_BIND(r_y_plus,  RARCH_ANALOG_RIGHT_Y_PLUS, "Right analog Y+ (down)"),
       DECLARE_BIND(r_y_minus, RARCH_ANALOG_RIGHT_Y_MINUS, "Right analog Y- (up)"),
+
+      DECLARE_BIND(turbo, RARCH_TURBO_ENABLE, "Turbo enable"),
 
       DECLARE_META_BIND(1, toggle_fast_forward,   RARCH_FAST_FORWARD_KEY, "Fast forward toggle"),
       DECLARE_META_BIND(2, hold_fast_forward,     RARCH_FAST_FORWARD_HOLD_KEY, "Fast forward hold"),
@@ -600,7 +904,6 @@ const struct input_bind_map input_config_bind_map[RARCH_BIND_LIST_END_NULL] = {
       DECLARE_META_BIND(2, cheat_index_minus,     RARCH_CHEAT_INDEX_MINUS, "Cheat index -"),
       DECLARE_META_BIND(2, cheat_toggle,          RARCH_CHEAT_TOGGLE, "Cheat toggle"),
       DECLARE_META_BIND(2, screenshot,            RARCH_SCREENSHOT, "Take screenshot"),
-      DECLARE_META_BIND(2, dsp_config,            RARCH_DSP_CONFIG, "DSP config"),
       DECLARE_META_BIND(2, audio_mute,            RARCH_MUTE, "Audio mute toggle"),
       DECLARE_META_BIND(2, netplay_flip_players,  RARCH_NETPLAY_FLIP, "Netplay flip players"),
       DECLARE_META_BIND(2, slowmotion,            RARCH_SLOWMOTION, "Slow motion"),
@@ -611,8 +914,8 @@ const struct input_bind_map input_config_bind_map[RARCH_BIND_LIST_END_NULL] = {
       DECLARE_META_BIND(2, disk_eject_toggle,     RARCH_DISK_EJECT_TOGGLE, "Disk eject toggle"),
       DECLARE_META_BIND(2, disk_next,             RARCH_DISK_NEXT, "Disk next"),
       DECLARE_META_BIND(2, grab_mouse_toggle,     RARCH_GRAB_MOUSE_TOGGLE, "Grab mouse toggle"),
-#ifdef HAVE_RGUI
-      DECLARE_META_BIND(1, menu_toggle,           RARCH_MENU_TOGGLE, "RGUI menu toggle"),
+#ifdef HAVE_MENU
+      DECLARE_META_BIND(1, menu_toggle,           RARCH_MENU_TOGGLE, "Menu toggle"),
 #endif
 };
 
@@ -683,27 +986,83 @@ const struct input_key_map input_config_key_map[] = {
    { "tilde", RETROK_BACKQUOTE },
    { "backquote", RETROK_BACKQUOTE },
    { "pause", RETROK_PAUSE },
+
+   /* Keys that weren't mappable before */
+   { "quote", RETROK_QUOTE },
+   { "comma", RETROK_COMMA },
+   { "minus", RETROK_MINUS },
+   { "slash", RETROK_SLASH },
+   { "semicolon", RETROK_SEMICOLON },
+   { "equals", RETROK_EQUALS },
+   { "leftbracket", RETROK_LEFTBRACKET },
+   { "backslash", RETROK_BACKSLASH },
+   { "rightbracket", RETROK_RIGHTBRACKET },
+   { "kp_period", RETROK_KP_PERIOD },
+   { "kp_equals", RETROK_KP_EQUALS },
+   { "rctrl", RETROK_RCTRL },
+   { "ralt", RETROK_RALT },
+
+   /* Keys not referenced in any keyboard mapping (except perhaps apple_key_map_hidusage) */
+   { "caret", RETROK_CARET },
+   { "underscore", RETROK_UNDERSCORE },
+   { "exclaim", RETROK_EXCLAIM },
+   { "quotedbl", RETROK_QUOTEDBL },
+   { "hash", RETROK_HASH },
+   { "dollar", RETROK_DOLLAR },
+   { "ampersand", RETROK_AMPERSAND },
+   { "leftparen", RETROK_LEFTPAREN },
+   { "rightparen", RETROK_RIGHTPAREN },
+   { "asterisk", RETROK_ASTERISK },
+   { "plus", RETROK_PLUS },
+   { "colon", RETROK_COLON },
+   { "less", RETROK_LESS },
+   { "greater", RETROK_GREATER },
+   { "question", RETROK_QUESTION },
+   { "at", RETROK_AT },
+
+   { "f13", RETROK_F13 },
+   { "f14", RETROK_F14 },
+   { "f15", RETROK_F15 },
+
+   { "rmeta", RETROK_RMETA },
+   { "lmeta", RETROK_LMETA },
+   { "lsuper", RETROK_LSUPER },
+   { "rsuper", RETROK_RSUPER },
+   { "mode", RETROK_MODE },
+   { "compose", RETROK_COMPOSE },
+
+   { "help", RETROK_HELP },
+   { "sysreq", RETROK_SYSREQ },
+   { "break", RETROK_BREAK },
+   { "menu", RETROK_MENU },
+   { "power", RETROK_POWER },
+   { "euro", RETROK_EURO },
+   { "undo", RETROK_UNDO },
+   { "clear", RETROK_CLEAR },
+
    { "nul", RETROK_UNKNOWN },
    { NULL, RETROK_UNKNOWN },
 };
 
-static enum retro_key find_sk_bind(const char *str)
+static enum retro_key find_rk_bind(const char *str)
 {
-   for (size_t i = 0; input_config_key_map[i].str; i++)
+   size_t i;
+   for (i = 0; input_config_key_map[i].str; i++)
    {
       if (strcasecmp(input_config_key_map[i].str, str) == 0)
          return input_config_key_map[i].key;
    }
 
+   RARCH_WARN("Key name %s not found.\n", str);
    return RETROK_UNKNOWN;
 }
 
-static enum retro_key find_sk_key(const char *str)
+enum retro_key input_translate_str_to_rk(const char *str)
 {
    if (strlen(str) == 1 && isalpha(*str))
       return (enum retro_key)(RETROK_a + (tolower(*str) - (int)'a'));
    else
-      return find_sk_bind(str);
+      return find_rk_bind(str);
 }
 
 void input_config_parse_key(config_file_t *conf, const char *prefix, const char *btn,
@@ -714,7 +1073,7 @@ void input_config_parse_key(config_file_t *conf, const char *prefix, const char 
    snprintf(key, sizeof(key), "%s_%s", prefix, btn);
 
    if (config_get_array(conf, key, tmp, sizeof(tmp)))
-      bind->key = find_sk_key(tmp);
+      bind->key = input_translate_str_to_rk(tmp);
 }
 
 const char *input_config_get_prefix(unsigned player, bool meta)
@@ -725,6 +1084,15 @@ const char *input_config_get_prefix(unsigned player, bool meta)
       return bind_player_prefix[player];
    else
       return NULL; // Don't bother with meta bind for anyone else than first player.
+}
+
+unsigned input_translate_str_to_bind_id(const char *str)
+{
+   unsigned i;
+   for (i = 0; input_config_bind_map[i].valid; i++)
+      if (!strcmp(str, input_config_bind_map[i].base))
+         return i;
+   return RARCH_BIND_LIST_END;
 }
 
 static void parse_hat(struct retro_keybind *bind, const char *str)
@@ -795,15 +1163,18 @@ void input_config_parse_joy_axis(config_file_t *conf, const char *prefix,
             bind->joyaxis = AXIS_POS(axis);
          else
             bind->joyaxis = AXIS_NEG(axis);
-
       }
+
+      // Ensure that d-pad emulation doesn't screw this over.
+      bind->orig_joyaxis = bind->joyaxis;
    }
 }
 
 #if !defined(IS_JOYCONFIG) && !defined(IS_RETROLAUNCH)
 static void input_autoconfigure_joypad_conf(config_file_t *conf, struct retro_keybind *binds)
 {
-   for (unsigned i = 0; i < RARCH_BIND_LIST_END; i++)
+   unsigned i;
+   for (i = 0; i < RARCH_BIND_LIST_END; i++)
    {
       input_config_parse_joy_button(conf, "input", input_config_bind_map[i].base, &binds[i]);
       input_config_parse_joy_axis(conf, "input", input_config_bind_map[i].base, &binds[i]);
@@ -814,12 +1185,12 @@ static bool input_try_autoconfigure_joypad_from_conf(config_file_t *conf, unsign
 {
    if (!conf)
       return false;
-         
+
    char ident[1024];
    char input_driver[1024];
-   
+
    *ident = *input_driver = '\0';
-   
+
    config_get_array(conf, "input_device", ident, sizeof(ident));
    config_get_array(conf, "input_driver", input_driver, sizeof(input_driver));
 
@@ -844,6 +1215,8 @@ static bool input_try_autoconfigure_joypad_from_conf(config_file_t *conf, unsign
 
 void input_config_autoconfigure_joypad(unsigned index, const char *name, const char *driver)
 {
+   size_t i;
+
    if (!g_settings.input.autodetect_enable)
       return;
 
@@ -851,7 +1224,7 @@ void input_config_autoconfigure_joypad(unsigned index, const char *name, const c
    // every time (fine in log).
    bool block_osd_spam = g_settings.input.autoconfigured[index] && name;
 
-   for (unsigned i = 0; i < RARCH_BIND_LIST_END; i++)
+   for (i = 0; i < RARCH_BIND_LIST_END; i++)
    {
       g_settings.input.autoconf_binds[index][i].joykey = NO_BTN;
       g_settings.input.autoconf_binds[index][i].joyaxis = AXIS_NONE;
@@ -866,7 +1239,7 @@ void input_config_autoconfigure_joypad(unsigned index, const char *name, const c
 
 #ifdef HAVE_BUILTIN_AUTOCONFIG
    // First internal
-   for (size_t i = 0; input_builtin_autoconfs[i]; i++)
+   for (i = 0; input_builtin_autoconfs[i]; i++)
    {
       config_file_t *conf = config_file_new_from_string(input_builtin_autoconfs[i]);
       bool success = input_try_autoconfigure_joypad_from_conf(conf, index, name, driver, block_osd_spam);
@@ -875,16 +1248,17 @@ void input_config_autoconfigure_joypad(unsigned index, const char *name, const c
          break;
    }
 #endif
-   
+
    // Now try files
    if (!internal_only)
    {
       struct string_list *list = dir_list_new(g_settings.input.autoconfig_dir, "cfg", false);
       if (!list)
          return;
-   
-      for (size_t i = 0; i < list->size; i++)
+
+      for (i = 0; i < list->size; i++)
       {
+         RARCH_LOG("[AUTOINPUT]: Trying to load autoconfig file: %s.\n", list->elems[i].data);
          config_file_t *conf = config_file_new(list->elems[i].data);
          if (!conf)
             continue;
@@ -893,9 +1267,86 @@ void input_config_autoconfigure_joypad(unsigned index, const char *name, const c
          if (success)
             break;
       }
-      
+
       string_list_free(list);
    }
+}
+
+const struct retro_keybind *input_get_auto_bind(unsigned port, unsigned id)
+{
+   int joy_index = g_settings.input.joypad_map[port];
+   if (joy_index < 0)
+      return NULL;
+   return &g_settings.input.autoconf_binds[joy_index][id];
+}
+
+static void input_get_bind_string_joykey(char *buf, const char *prefix, const struct retro_keybind *bind, size_t size)
+{
+   if (driver.input->set_keybinds)
+   {
+      struct platform_bind key_label;
+      strlcpy(key_label.desc, "Unknown", sizeof(key_label.desc));
+      key_label.joykey = bind->joykey;
+      driver.input->set_keybinds(&key_label, 0, 0, 0, (1ULL << KEYBINDS_ACTION_GET_BIND_LABEL));
+      snprintf(buf, size, "%s%s (btn) ", prefix, key_label.desc);
+   }
+   else if (GET_HAT_DIR(bind->joykey))
+   {
+      const char *dir;
+      switch (GET_HAT_DIR(bind->joykey))
+      {
+         case HAT_UP_MASK: dir = "up"; break;
+         case HAT_DOWN_MASK: dir = "down"; break;
+         case HAT_LEFT_MASK: dir = "left"; break;
+         case HAT_RIGHT_MASK: dir = "right"; break;
+         default: dir = "?"; break;
+      }
+      snprintf(buf, size, "%sHat #%u %s ", prefix, (unsigned)GET_HAT(bind->joykey), dir);
+   }
+   else
+      snprintf(buf, size, "%s%u (btn) ", prefix, (unsigned)bind->joykey);
+}
+
+static void input_get_bind_string_joyaxis(char *buf, const char *prefix, const struct retro_keybind *bind, size_t size)
+{
+   unsigned axis = 0;
+   char dir = '\0';
+   if (AXIS_NEG_GET(bind->joyaxis) != AXIS_DIR_NONE)
+   {
+      dir = '-';
+      axis = AXIS_NEG_GET(bind->joyaxis);
+   }
+   else if (AXIS_POS_GET(bind->joyaxis) != AXIS_DIR_NONE)
+   {
+      dir = '+';
+      axis = AXIS_POS_GET(bind->joyaxis);
+   }
+   snprintf(buf, size, "%s%c%u (axis) ", prefix, dir, axis);
+}
+
+void input_get_bind_string(char *buf, const struct retro_keybind *bind,
+      const struct retro_keybind *auto_bind, size_t size)
+{
+   *buf = '\0';
+   if (bind->joykey != NO_BTN)
+      input_get_bind_string_joykey(buf, "", bind, size);
+   else if (bind->joyaxis != AXIS_NONE)
+      input_get_bind_string_joyaxis(buf, "", bind, size);
+   else if (auto_bind && auto_bind->joykey != NO_BTN)
+      input_get_bind_string_joykey(buf, "Auto: ", auto_bind, size);
+   else if (auto_bind && auto_bind->joyaxis != AXIS_NONE)
+      input_get_bind_string_joyaxis(buf, "Auto: ", auto_bind, size);
+
+#ifndef RARCH_CONSOLE
+   char key[64];
+   input_translate_rk_to_str(bind->key, key, sizeof(key));
+   if (!strcmp(key, "nul"))
+      *key = '\0';
+
+   char keybuf[64];
+   snprintf(keybuf, sizeof(keybuf), "(Key: %s)", key);
+   strlcat(buf, keybuf, size);
+#endif
 }
 #else
 void input_config_autoconfigure_joypad(unsigned index, const char *name, const char *driver)
@@ -905,4 +1356,41 @@ void input_config_autoconfigure_joypad(unsigned index, const char *name, const c
    (void)driver;
 }
 #endif
+
+void input_push_analog_dpad(struct retro_keybind *binds, unsigned mode)
+{
+   unsigned i;
+   unsigned analog_base;
+   switch (mode)
+   {
+      case ANALOG_DPAD_LSTICK:
+      case ANALOG_DPAD_RSTICK:
+         analog_base = mode == ANALOG_DPAD_LSTICK ? RARCH_ANALOG_LEFT_X_PLUS : RARCH_ANALOG_RIGHT_X_PLUS;
+
+         binds[RETRO_DEVICE_ID_JOYPAD_RIGHT].orig_joyaxis = binds[RETRO_DEVICE_ID_JOYPAD_RIGHT].joyaxis;
+         binds[RETRO_DEVICE_ID_JOYPAD_LEFT].orig_joyaxis  = binds[RETRO_DEVICE_ID_JOYPAD_LEFT].joyaxis;
+         binds[RETRO_DEVICE_ID_JOYPAD_DOWN].orig_joyaxis  = binds[RETRO_DEVICE_ID_JOYPAD_DOWN].joyaxis;
+         binds[RETRO_DEVICE_ID_JOYPAD_UP].orig_joyaxis    = binds[RETRO_DEVICE_ID_JOYPAD_UP].joyaxis;
+
+         // Inherit joyaxis from analogs.
+         binds[RETRO_DEVICE_ID_JOYPAD_RIGHT].joyaxis = binds[analog_base + 0].joyaxis;
+         binds[RETRO_DEVICE_ID_JOYPAD_LEFT].joyaxis  = binds[analog_base + 1].joyaxis;
+         binds[RETRO_DEVICE_ID_JOYPAD_DOWN].joyaxis  = binds[analog_base + 2].joyaxis;
+         binds[RETRO_DEVICE_ID_JOYPAD_UP].joyaxis    = binds[analog_base + 3].joyaxis;
+         break;
+
+      default:
+         for (i = RETRO_DEVICE_ID_JOYPAD_UP; i <= RETRO_DEVICE_ID_JOYPAD_RIGHT; i++)
+            binds[i].orig_joyaxis = binds[i].joyaxis;
+         break;
+   }
+}
+
+// Restore binds temporarily overridden by input_push_analog_dpad.
+void input_pop_analog_dpad(struct retro_keybind *binds)
+{
+   unsigned i;
+   for (i = RETRO_DEVICE_ID_JOYPAD_UP; i <= RETRO_DEVICE_ID_JOYPAD_RIGHT; i++)
+      binds[i].joyaxis = binds[i].orig_joyaxis;
+}
 

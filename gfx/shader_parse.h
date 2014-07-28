@@ -1,5 +1,5 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
+ *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -17,17 +17,37 @@
 #define SHADER_PARSE_H
 
 #include "../boolean.h"
-#include "../conf/config_file.h"
 #include "state_tracker.h"
-#include "../general.h"
+#include "../conf/config_file.h"
+#include "../miscellaneous.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#ifndef GFX_MAX_SHADERS
 #define GFX_MAX_SHADERS 16
+#endif
+
+#ifndef GFX_MAX_TEXTURES
 #define GFX_MAX_TEXTURES 8
+#endif
+
+#ifndef GFX_MAX_VARIABLES
 #define GFX_MAX_VARIABLES 64
+#endif
+
+#ifndef GFX_MAX_PARAMETERS
+#define GFX_MAX_PARAMETERS 64
+#endif
+
+enum rarch_shader_type
+{
+   RARCH_SHADER_CG,
+   RARCH_SHADER_HLSL,
+   RARCH_SHADER_GLSL,
+   RARCH_SHADER_NONE
+};
 
 enum gfx_scale_type
 {
@@ -54,7 +74,6 @@ enum gfx_wrap_type
 
 struct gfx_fbo_scale
 {
-   bool valid;
    enum gfx_scale_type type_x;
    enum gfx_scale_type type_y;
    float scale_x;
@@ -62,24 +81,39 @@ struct gfx_fbo_scale
    unsigned abs_x;
    unsigned abs_y;
    bool fp_fbo;
+   bool srgb_fbo;
+   bool valid;
+};
+
+struct gfx_shader_parameter
+{
+   char id[64];
+   char desc[64];
+   float current;
+   float minimum;
+   float initial;
+   float maximum;
+   float step;
 };
 
 struct gfx_shader_pass
 {
    struct
    {
-      char cg[PATH_MAX];
+      char path[PATH_MAX];
       struct
       {
          char *vertex; // Dynamically allocated. Must be free'd.
          char *fragment; // Dynamically allocated. Must be free'd.
-      } xml;
+      } string;
    } source;
 
+   char alias[64];
    struct gfx_fbo_scale fbo;
    enum gfx_filter_type filter;
    enum gfx_wrap_type wrap;
    unsigned frame_count_mod;
+   bool mipmap;
 };
 
 struct gfx_shader_lut
@@ -88,6 +122,7 @@ struct gfx_shader_lut
    char path[PATH_MAX];
    enum gfx_filter_type filter;
    enum gfx_wrap_type wrap;
+   bool mipmap;
 };
 
 // This is pretty big, shouldn't be put on the stack.
@@ -105,6 +140,9 @@ struct gfx_shader
    unsigned luts;
    struct gfx_shader_lut lut[GFX_MAX_TEXTURES];
 
+   struct gfx_shader_parameter parameters[GFX_MAX_PARAMETERS];
+   unsigned num_parameters;
+
    unsigned variables;
    struct state_tracker_uniform_info variable[GFX_MAX_VARIABLES];
    char script_path[PATH_MAX];
@@ -113,10 +151,10 @@ struct gfx_shader
 };
 
 bool gfx_shader_read_conf_cgp(config_file_t *conf, struct gfx_shader *shader);
-bool gfx_shader_read_xml(const char *path, struct gfx_shader *shader);
-void gfx_shader_write_conf_cgp(config_file_t *conf, const struct gfx_shader *shader);
+void gfx_shader_write_conf_cgp(config_file_t *conf, struct gfx_shader *shader);
 
 void gfx_shader_resolve_relative(struct gfx_shader *shader, const char *ref_path);
+bool gfx_shader_resolve_parameters(config_file_t *conf, struct gfx_shader *shader);
 
 enum rarch_shader_type gfx_shader_parse_type(const char *path, enum rarch_shader_type fallback);
 

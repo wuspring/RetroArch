@@ -1,5 +1,6 @@
 /*  RetroArch - A frontend for libretro.
- *  Copyright (C) 2013 - Jason Fetters
+ *  Copyright (C) 2013-2014 - Jason Fetters
+ *  Copyright (C) 2011-2014 - Daniel De Matteis
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -14,38 +15,68 @@
  */
 
 #import "RetroArch_Apple.h"
-#include "rarch_wrapper.h"
+#include "../../general.h"
 
-#include "general.h"
-#include "gfx/gfx_common.h"
-
+// Define compatibility symbols and categories
 #ifdef IOS
 
-#import "views.h"
+#ifdef HAVE_CAMERA
+#include <AVFoundation/AVCaptureSession.h>
+#include <AVFoundation/AVCaptureDevice.h>
+#include <AVFoundation/AVCaptureOutput.h>
+#include <AVFoundation/AVCaptureInput.h>
+#include <AVFoundation/AVMediaFormat.h>
+#include <CoreVideo/CVOpenGLESTextureCache.h>
+#endif
 
-static const float ALMOST_INVISIBLE = .021f;
-static RAGameView* g_instance;
-static GLKView* g_view;
-static EAGLContext* g_context;
-static UIView* g_pause_view;
-static UIView* g_pause_indicator_view;
+#define APP_HAS_FOCUS ([[UIApplication sharedApplication] applicationState] == UIApplicationStateActive)
+
+#define GLContextClass EAGLContext
+#define GLAPIType GFX_CTX_OPENGL_ES_API
+#define GLFrameworkID CFSTR("com.apple.opengles")
+#define RAScreen UIScreen
+
+@interface EAGLContext (OSXCompat) @end
+@implementation EAGLContext (OSXCompat)
++ (void)clearCurrentContext { [EAGLContext setCurrentContext:nil];  }
+- (void)makeCurrentContext  { [EAGLContext setCurrentContext:self]; }
+@end
 
 #elif defined(OSX)
+#define APP_HAS_FOCUS ([NSApp isActive])
 
-#include "apple_input.h"
-
-static bool g_has_went_fullscreen;
-static RAGameView* g_instance;
-static NSOpenGLContext* g_context;
-static NSOpenGLPixelFormat* g_format;
+#define GLContextClass NSOpenGLContext
+#define GLAPIType GFX_CTX_OPENGL_API
+#define GLFrameworkID CFSTR("com.apple.opengl")
+#define RAScreen NSScreen
 
 #define g_view g_instance // < RAGameView is a container on iOS; on OSX these are both the same object
 
+@interface NSScreen (IOSCompat) @end
+@implementation NSScreen (IOSCompat)
+- (CGRect)bounds
+{
+	CGRect cgrect  = (CGRect)NSRectToCGRect(self.frame);
+	return CGRectMake(0, 0, CGRectGetWidth(cgrect), CGRectGetHeight(cgrect));
+}
+- (float) scale  { return 1.0f; }
+@end
+
 #endif
 
-static int g_fast_forward_skips;
-static bool g_is_syncing = true;
-static float g_screen_scale = 1.0f;
+#ifdef IOS
+
+#include <GLKit/GLKit.h>
+#include "../iOS/views.h"
+#define ALMOST_INVISIBLE (.021f)
+static GLKView *g_view;
+static UIView *g_pause_indicator_view;
+
+#endif
+
+static RAGameView* g_instance;
+static GLContextClass* g_context;
+
 
 @implementation RAGameView
 + (RAGameView*)get
@@ -61,7 +92,7 @@ static float g_screen_scale = 1.0f;
 - (id)init
 {
    self = [super init];
-   self.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+   [self setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
    return self;
 }
 
@@ -76,11 +107,6 @@ static float g_screen_scale = 1.0f;
 - (void)display
 {
    [g_context flushBuffer];
-}
-
-- (void)bindDrawable
-{
-   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 // Stop the annoying sound when pressing a key
@@ -98,87 +124,51 @@ static float g_screen_scale = 1.0f;
 {
 }
 
-- (void)mouseDown:(NSEvent*)theEvent
-{
-   g_current_input_data.touch_count = 1;
-   [self mouseDragged:theEvent];
-}
-
-- (void)mouseUp:(NSEvent*)theEvent
-{
-   g_current_input_data.touch_count = 0;
-}
-
-- (void)mouseDragged:(NSEvent*)theEvent
-{
-   NSPoint pos = [self convertPoint:[theEvent locationInWindow] fromView:nil];
-   g_current_input_data.touches[0].screen_x = pos.x;
-   g_current_input_data.touches[0].screen_y = pos.y;
-}
-
-#elif defined(IOS) // < iOS Pause menu and lifecycle
+#elif defined(IOS)
+// < iOS Pause menu and lifecycle
 - (id)init
 {
+   UINib *xib;
    self = [super init];
 
-   g_screen_scale = [[UIScreen mainScreen] scale];
-
-   UINib* xib = [UINib nibWithNibName:@"PauseView" bundle:nil];
-   g_pause_view = [[xib instantiateWithOwner:[RetroArch_iOS get] options:nil] lastObject];
-   
-   xib = [UINib nibWithNibName:@"PauseIndicatorView" bundle:nil];
+   xib = (UINib*)[UINib nibWithNibName:BOXSTRING("PauseIndicatorView") bundle:nil];
    g_pause_indicator_view = [[xib instantiateWithOwner:[RetroArch_iOS get] options:nil] lastObject];
 
    g_view = [GLKView new];
    g_view.multipleTouchEnabled = YES;
    g_view.enableSetNeedsDisplay = NO;
-   [g_view addSubview:g_pause_view];
    [g_view addSubview:g_pause_indicator_view];
 
    self.view = g_view;
+   
+   [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(showPauseIndicator) name:UIApplicationWillEnterForegroundNotification object:nil];
    return self;
 }
 
-
 // Pause Menus
+- (void)viewDidAppear:(BOOL)animated
+{
+   [self showPauseIndicator];
+}
+
+- (void)showPauseIndicator
+{
+   g_pause_indicator_view.alpha = 1.0f;
+   [NSObject cancelPreviousPerformRequestsWithTarget:g_instance];
+   [g_instance performSelector:@selector(hidePauseButton) withObject:g_instance afterDelay:3.0f];
+}
+
 - (void)viewWillLayoutSubviews
 {
    UIInterfaceOrientation orientation = self.interfaceOrientation;
    CGRect screenSize = [[UIScreen mainScreen] bounds];
-   
-   const float width = ((int)orientation < 3) ? CGRectGetWidth(screenSize) : CGRectGetHeight(screenSize);
-   const float height = ((int)orientation < 3) ? CGRectGetHeight(screenSize) : CGRectGetWidth(screenSize);
-
+   float width = ((int)orientation < 3) ? CGRectGetWidth(screenSize) : CGRectGetHeight(screenSize);
+   float height = ((int)orientation < 3) ? CGRectGetHeight(screenSize) : CGRectGetWidth(screenSize);
    float tenpctw = width / 10.0f;
    float tenpcth = height / 10.0f;
    
-   g_pause_view.frame = CGRectMake(width / 2.0f - 150.0f, height / 2.0f - 150.0f, 300.0f, 300.0f);
    g_pause_indicator_view.frame = CGRectMake(tenpctw * 4.0f, 0.0f, tenpctw * 2.0f, tenpcth);
    [g_pause_indicator_view viewWithTag:1].frame = CGRectMake(0, 0, tenpctw * 2.0f, tenpcth);
-}
-
-- (void)openPauseMenu
-{
-   // Setup save state selector
-   UISegmentedControl* stateSelect = (UISegmentedControl*)[g_pause_view viewWithTag:10];
-   stateSelect.selectedSegmentIndex = (g_extern.state_slot < 10) ? g_extern.state_slot : -1;
-
-   g_extern.is_paused = true;
-
-   //
-   [UIView animateWithDuration:0.2
-      animations:^{ g_pause_view.alpha = 1.0f; }
-      completion:^(BOOL finished) { }];
-}
-
-- (void)closePauseMenu
-{
-   [UIView animateWithDuration:0.2
-      animations:^{ g_pause_view.alpha = 0.0f; }
-      completion:^(BOOL finished) { }
-   ];
-   
-   g_extern.is_paused = false;
 }
 
 - (void)hidePauseButton
@@ -189,204 +179,57 @@ static float g_screen_scale = 1.0f;
    ];
 }
 
+// NOTE: This version runs on iOS6+
+- (NSUInteger)supportedInterfaceOrientations
+{
+   return apple_frontend_settings.orientation_flags;
+}
+
+// NOTE: This version runs on iOS2-iOS5, but not iOS6+
+- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation
+{
+   switch (interfaceOrientation)
+   {
+      case UIInterfaceOrientationPortrait:
+         return (apple_frontend_settings.orientation_flags & UIInterfaceOrientationMaskPortrait);
+      case UIInterfaceOrientationPortraitUpsideDown:
+         return (apple_frontend_settings.orientation_flags & UIInterfaceOrientationMaskPortraitUpsideDown);
+      case UIInterfaceOrientationLandscapeLeft:
+         return (apple_frontend_settings.orientation_flags & UIInterfaceOrientationMaskLandscapeLeft);
+      case UIInterfaceOrientationLandscapeRight:
+         return (apple_frontend_settings.orientation_flags & UIInterfaceOrientationMaskLandscapeRight);
+   }
+   
+   return YES;
+}
+
+#ifdef HAVE_CAMERA
+#include "contentview_camera_ios.m.inl"
+#endif
+
+#endif
+
+#ifdef HAVE_LOCATION
+#include "contentview_location.m.inl"
 #endif
 
 @end
 
-// Realistically these functions don't create or destroy the view; just the OpenGL context.
-bool apple_init_game_view()
-{
-#ifdef IOS
-   dispatch_sync(dispatch_get_main_queue(), ^{
-      // Make sure the view was created
-      [RAGameView get];
-
-      g_context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
-      [EAGLContext setCurrentContext:g_context];
-      g_view.context = g_context;
-      
-      // Show pause button for a few seconds, so people know it's there
-      g_pause_indicator_view.alpha = 1.0f;
-      [NSObject cancelPreviousPerformRequestsWithTarget:g_instance];
-      [g_instance performSelector:@selector(hidePauseButton) withObject:g_instance afterDelay:3.0f];
-   });
-
-   [EAGLContext setCurrentContext:g_context];
-#else
-   [g_context makeCurrentContext];
-#endif
-   return true;
-}
-
-void apple_destroy_game_view()
-{
-   dispatch_sync(dispatch_get_main_queue(), ^{
-      glFinish();
-      
-#ifdef IOS
-      g_view.context = nil;
-      [EAGLContext setCurrentContext:nil];
-      g_context = nil;
-#endif
-   });
-   
-#ifdef IOS
-   [EAGLContext setCurrentContext:nil];
-#else
-   [NSOpenGLContext clearCurrentContext];
-#endif
-}
-
-bool apple_create_gl_context(uint32_t version)
-{
-#ifdef OSX
-   [NSOpenGLContext clearCurrentContext];
-   
-   dispatch_sync(dispatch_get_main_queue(), ^{
-      [NSOpenGLContext clearCurrentContext];
-      [g_context clearDrawable];
-      g_context = nil;
-      g_format = nil;
-   
-      NSOpenGLPixelFormatAttribute attributes [] = {
-         NSOpenGLPFADoubleBuffer,	// double buffered
-         NSOpenGLPFADepthSize, (NSOpenGLPixelFormatAttribute)16, // 16 bit depth buffer
-         version ? NSOpenGLPFAOpenGLProfile : 0, version,
-         (NSOpenGLPixelFormatAttribute)nil
-      };
-
-      g_format = [[NSOpenGLPixelFormat alloc] initWithAttributes:attributes];
-      g_context = [[NSOpenGLContext alloc] initWithFormat:g_format shareContext:nil];
-      g_context.view = g_view;
-      [g_context makeCurrentContext];
-   });
-   
-   [g_context makeCurrentContext];
-
-#endif
-
-   return true;
-
-}
-
-void apple_flip_game_view()
-{
-   if (--g_fast_forward_skips < 0)
-   {
-      dispatch_sync(dispatch_get_main_queue(), ^{
-         [g_view display];
-      });
-      g_fast_forward_skips = g_is_syncing ? 0 : 3;
-   }
-}
-
-void apple_set_game_view_sync(unsigned interval)
-{
-#ifdef IOS // < No way to disable Vsync on iOS?
-   g_is_syncing = interval ? true : false;
-   g_fast_forward_skips = interval ? 0 : 3;
-#elif defined(OSX)
-   GLint value = interval ? 1 : 0;
-   [g_context setValues:&value forParameter:NSOpenGLCPSwapInterval];
-#endif
-}
-
-void apple_get_game_view_size(unsigned *width, unsigned *height)
-{
-   *width  = g_view.bounds.size.width * g_screen_scale;
-   *width = *width ? *width : 640;
-   
-   *height = g_view.bounds.size.height * g_screen_scale;
-   *height = *height ? *height : 480;
-}
-
-void *apple_get_proc_address(const char *symbol_name)
-{
-#ifdef IOS
-   (void)symbol_name; // We don't need symbols above GLES2 on iOS.
-   return NULL;
-#else
-   CFStringRef symbol = CFStringCreateWithCString(kCFAllocatorDefault, symbol_name, kCFStringEncodingASCII);
-   void *proc = CFBundleGetFunctionPointerForName(CFBundleGetBundleWithIdentifier(CFSTR("com.apple.opengl")),
-      symbol);
-   CFRelease(symbol);
-   return proc;
-#endif
-}
-
-void apple_update_window_title(void)
-{
-   static char buf[128];
-   bool got_text = gfx_get_fps(buf, sizeof(buf), false);
-#ifdef OSX
-   static const char* const text = buf; // < Can't access buf directly in the block
-   
-   if (got_text)
-   {
-      // NOTE: This could go bad if buf is updated again before this completes.
-      //       If it poses a problem it should be changed to dispatch_sync.
-      dispatch_async(dispatch_get_main_queue(), ^
-      {
-         g_view.window.title = @(text);
-      });
-   }
-#endif
-}
-
-bool apple_game_view_has_focus(void)
-{
-#ifdef OSX
-   return [NSApp isActive];
-#else
-   return true;
-#endif
-}
-
-bool apple_set_video_mode(unsigned width, unsigned height, bool fullscreen)
-{
-   __block bool result = true;
-
-#ifdef OSX
-   dispatch_sync(dispatch_get_main_queue(),
-   ^{
-      // TODO: Sceen mode support
-      
-      if (fullscreen && !g_has_went_fullscreen)
-      {
-         if (g_settings.video.monitor_index >= [NSScreen screens].count)
-         {
-            apple_display_alert(@"Could not go fullscreen: Monitor index out of range.", nil);
-            result = false;
-            return;
-         }
-      
-         [g_view enterFullScreenMode:[NSScreen screens][g_settings.video.monitor_index] withOptions:nil];
-         [NSCursor hide];
-      }
-      else if (!fullscreen && g_has_went_fullscreen)
-      {
-         [g_view exitFullScreenModeWithOptions:nil];
-         [g_view.window makeFirstResponder:g_view];
-         [NSCursor unhide];
-      }
-      
-      g_has_went_fullscreen = fullscreen;
-      if (!g_has_went_fullscreen)
-         [g_view.window setContentSize:NSMakeSize(width, height)];
-   });
-#endif
-
-   // TODO: Maybe iOS users should be apple to show/hide the status bar here?
-
-   return result;
-}
-
 #ifdef IOS
 void apple_bind_game_view_fbo(void)
 {
-   dispatch_sync(dispatch_get_main_queue(), ^{
-      if (g_context)
-         [g_view bindDrawable];
-   });
+   if (g_context)
+      [g_view bindDrawable];
 }
+
+#ifdef HAVE_CAMERA
+#include "apple_camera_ios.c.inl"
 #endif
+
+#endif
+
+#ifdef HAVE_LOCATION
+#include "apple_location.c.inl"
+#endif
+
+#include "apple_gfx_context.c.inl"

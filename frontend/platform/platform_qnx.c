@@ -1,6 +1,6 @@
 /* RetroArch - A frontend for libretro.
- * Copyright (C) 2010-2013 - Hans-Kristian Arntzen
- * Copyright (C) 2011-2013 - Daniel De Matteis
+ * Copyright (C) 2010-2014 - Hans-Kristian Arntzen
+ * Copyright (C) 2011-2014 - Daniel De Matteis
  *
  * RetroArch is free software: you can redistribute it and/or modify it under the terms
  * of the GNU General Public License as published by the Free Software Found-
@@ -23,43 +23,45 @@
 #include "../../dynamic.h"
 #include "../../libretro_private.h"
 
-static void get_environment_settings(int argc, char *argv[], void *args)
+static void frontend_qnx_init(void *data)
 {
-   (void)argc;
-   (void)argv;
-
-/* FIXME - should this apply for both BB10 and PB? */
-#if defined(__QNX__) && !defined(HAVE_BB10)
-   rarch_environment_cb(RETRO_ENVIRONMENT_SET_LIBRETRO_PATH, (void*)"app/native/lib");
-
-   strlcpy(g_extern.config_path, "app/native/retroarch.cfg", sizeof(g_extern.config_path));
-   strlcpy(g_settings.video.shader_dir, "app/native/shaders_glsl", sizeof(g_settings.video.shader_dir));
-#endif
-
-   config_load();
-}
-
-static void system_init(void)
-{
-/* FIXME - should this apply for both BB10 and PB? */
-#if defined(__QNX__) && !defined(HAVE_BB10)
+   (void)data;
    bps_initialize();
-#endif
 }
 
-static void system_shutdown(void)
+static void frontend_qnx_shutdown(bool unused)
 {
+   (void)unused;
    bps_shutdown();
 }
 
+static int frontend_qnx_get_rating(void)
+{
+   /* TODO/FIXME - look at unique identifier per device and 
+    * determine rating for some */
+   return -1;
+}
+
+static void frontend_qnx_get_environment_settings(int *argc, char *argv[],
+      void *data, void *params_data)
+{
+   fill_pathname_join(g_defaults.config_path, "app/native", "retroarch.cfg", sizeof(g_defaults.config_path));
+   fill_pathname_join(g_defaults.shader_dir, "app/native", "shaders_glsl", sizeof(g_defaults.shader_dir));
+   fill_pathname_join(g_defaults.overlay_dir, "app/native", "overlays", sizeof(g_defaults.overlay_dir));
+   fill_pathname_join(g_defaults.core_dir, "app/native", "lib", sizeof(g_defaults.core_dir));
+   fill_pathname_join(g_defaults.core_info_dir, "app/native", "info", sizeof(g_defaults.core_info_dir));
+}
+
 const frontend_ctx_driver_t frontend_ctx_qnx = {
-   get_environment_settings,     /* get_environment_settings */
-   system_init,                  /* init */
+   frontend_qnx_get_environment_settings, /* get_environment_settings */
+   frontend_qnx_init,            /* init */
    NULL,                         /* deinit */
    NULL,                         /* exitspawn */
    NULL,                         /* process_args */
    NULL,                         /* process_events */
    NULL,                         /* exec */
-   system_shutdown,              /* shutdown */
+   frontend_qnx_shutdown,        /* shutdown */
+   NULL,                         /* get_name */
+   frontend_qnx_get_rating,      /* get_rating */
    "qnx",
 };

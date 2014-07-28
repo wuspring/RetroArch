@@ -5,7 +5,7 @@
 #include <ogc/machine/asm.h>
 #include <ogc/lwp_heap.h>
 #include <ogc/system.h>
-#include <ogc/machine/processor.h>
+#include "../gx/ppc_asm.h"
 #include <string.h>
 #include <malloc.h>
 #include <unistd.h>
@@ -48,6 +48,7 @@ static u32 __lwp_heap_block_size(heap_cntrl *theheap, void *ptr)
 {
    heap_block *block;
    u32 dsize, level;
+   (void)level;
 
    _CPU_ISR_Disable(level);
    block = __lwp_heap_usrblockat(ptr);
@@ -67,7 +68,7 @@ static u32 __lwp_heap_block_size(heap_cntrl *theheap, void *ptr)
 
 static heap_cntrl gx_mem2_heap;
 
-bool gx_init_mem2()  
+bool gx_init_mem2(void)  
 {
    u32 level;
    _CPU_ISR_Disable(level);
@@ -184,14 +185,14 @@ char *_mem2_strndup(const char *s, size_t n)
     return ptr;
 }
 
-u32 gx_mem2_used()
+u32 gx_mem2_used(void)
 {
    heap_iblock info;
    __lwp_heap_getinfo(&gx_mem2_heap, &info);
    return info.used_size;
 }
 
-u32 gx_mem2_total()
+u32 gx_mem2_total(void)
 {
    heap_iblock info;
    __lwp_heap_getinfo(&gx_mem2_heap, &info);
